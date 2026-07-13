@@ -1,0 +1,59 @@
+#!/bin/bash
+
+# File paths
+ORIGIN_NOTE="$1"
+BASE_PATH=$(dirname "${ORIGIN_NOTE}")
+NOTE_STEM=$(basename "${ORIGIN_NOTE%.md}")
+EXTRACTED_NOTE="${BASE_PATH}/Images/${NOTE_STEM}_image_Bank.md"
+TEMP_ORIGIN_NOTE="${BASE_PATH}/temp_origin.md"
+
+# Regular expression pattern to match base64 encoded images in Markdown image syntax
+BASE64_PATTERN='\!\[.*?\]\(data:image\/(png|jpeg|jpg|gif);base64,[^"]*?"[^"]*"\)'
+
+# Function to generate a unique ID
+generate_unique_id() {
+    echo "ID_$(date +%s%N)"
+}
+
+# Create Images directory if not present
+mkdir -p "${BASE_PATH}/Images"
+# Ensure the extracted note exists and create it if not
+touch "$EXTRACTED_NOTE"
+
+# Backup origin note before modification
+cp "$ORIGIN_NOTE" "${ORIGIN_NOTE}.bak"
+
+# Function to extract base64 string and replace it with a unique ID
+extract_and_replace() {
+    local line="$1"
+    if [[ $line =~ $BASE64_PATTERN ]]; then
+        local unique_id="$(generate_unique_id)"
+        local backlink="![[${EXTRACTED_NOTE}#${unique_id}]]"
+        
+        # Check if the unique ID already exists in the extracted note
+        if ! grep -q "$unique_id" "$EXTRACTED_NOTE"; then
+            # Append the base64 string with the unique ID as heading to the extracted note
+            {
+                echo "###### ${unique_id}"
+                echo "${line}"
+                echo ""
+            } >> "$EXTRACTED_NOTE"
+        fi
+        
+        # Replace the entire base64 image string with the backlink in the origin note
+        echo "${backlink}" >> "$TEMP_ORIGIN_NOTE"
+    else
+        # Copy the line as is if no base64 image is found
+        echo "$line" >> "$TEMP_ORIGIN_NOTE"
+    fi
+}
+
+# Read each line of the origin note and process it
+while IFS= read -r line; do
+    extract_and_replace "$line"
+done < "$ORIGIN_NOTE"
+
+# Replace the original note with the modified one
+mv "$TEMP_ORIGIN_NOTE" "$ORIGIN_NOTE"
+
+echo "Extraction and replacement complete!"
