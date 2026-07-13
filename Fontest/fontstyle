@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+
+# Sample text
+text="You can use ANSI escape codes to change the font style, color, and other text attributes in the terminal."
+
+# ANSI escape codes for text styles
+styles=(
+    "bold:1"       # Bold
+    "italic:3"     # Italic
+    "underline:4"  # Underline
+    "blink:5"      # Blink
+    "reverse:7"    # Reverse (swap foreground and background)
+    "hidden:8"     # Hidden
+)
+
+# ANSI escape codes for text colors
+colors=(
+    "red:31"
+    "green:32"
+    "yellow:33"
+    "blue:34"
+    "magenta:35"
+    "cyan:36"
+    "white:37"
+)
+
+# Reset all attributes
+reset="\033[0m"
+
+# Function to apply styles and colors
+apply_style() {
+    local style_code=$1
+    local text=$2
+    echo -e "\033[${style_code}m${text}${reset}"
+}
+
+# Display text with different styles
+echo "=== Text Styles ==="
+for style in "${styles[@]}"; do
+    style_name=${style%:*}  # Extract style name (e.g., "bold")
+    style_code=${style#*:}  # Extract style code (e.g., "1")
+    echo -n "${style_name}: "
+    apply_style "$style_code" "$text"
+done
+
+# Display text with different colors
+echo -e "\n=== Text Colors ==="
+for color in "${colors[@]}"; do
+    color_name=${color%:*}  # Extract color name (e.g., "red")
+    color_code=${color#*:}  # Extract color code (e.g., "31")
+    echo -n "${color_name}: "
+    apply_style "$color_code" "$text"
+done
+
+# Combine styles and colors
+echo -e "\n=== Combined Styles and Colors ==="
+for style in "${styles[@]}"; do
+    style_name=${style%:*}
+    style_code=${style#*:}
+    for color in "${colors[@]}"; do
+        color_name=${color%:*}
+        color_code=${color#*:}
+        echo -n "${style_name} + ${color_name}: "
+        apply_style "${style_code};${color_code}" "$text"
+    done
+done
