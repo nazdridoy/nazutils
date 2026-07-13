@@ -1,0 +1,926 @@
+#!/usr/bin/env python3
+"""
+mdassetdl
+================================
+Finds remote static-asset links (images, GIFs, …) in Markdown files,
+downloads them locally, and rewrites the links to relative paths.
+
+Run  ./mdassetdl --help  for full usage.
+"""
+
+import argparse
+import hashlib
+import io
+import os
+import pydoc
+import re
+import shutil
+import subprocess
+import sys
+import urllib.error
+import urllib.parse
+import urllib.request
+from pathlib import Path
+from typing import NamedTuple
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+VERSION = "2.0.0"
+
+DEFAULT_EXTENSIONS = {
+    "jpg", "jpeg", "png", "gif", "svg",
+    "webp", "bmp", "tiff", "tif", "ico", "avif",
+}
+
+VIDEO_HOSTS = {
+    "youtube.com", "youtu.be",
+    "vimeo.com",
+    "dailymotion.com",
+    "twitch.tv",
+    "wistia.com",
+    "loom.com",
+}
+
+USER_AGENT = (
+    "Mozilla/5.0 (X11; Linux x86_64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/124.0 Safari/537.36"
+)
+
+# Matches:  ![alt text](https://example.com/path/image.jpg)
+_MD_IMAGE_RE = re.compile(
+    r"(!\[(?P<alt>[^\]]*)\]\()(?P<url>https?://[^\s)\"']+)(\))",
+    re.IGNORECASE,
+)
+
+_COLOURS = {
+    "reset":   "\033[0m",
+    "bold":    "\033[1m",
+    "green":   "\033[32m",
+    "yellow":  "\033[33m",
+    "red":     "\033[31m",
+    "cyan":    "\033[36m",
+    "grey":    "\033[90m",
+    "blue":    "\033[34m",
+    "magenta": "\033[35m",
+}
+
+TICK  = "+"
+CROSS = "x"
+WARN  = "!"
+
+
+def _c(name: str, text: str) -> str:
+    """Apply ANSI colour if stdout is a tty."""
+    if sys.stdout.isatty():
+        return _COLOURS.get(name, "") + text + _COLOURS["reset"]
+    return text
+
+
+# ---------------------------------------------------------------------------
+# Data structure
+# ---------------------------------------------------------------------------
+
+class AssetAction(NamedTuple):
+    """One remote asset link found in a markdown file."""
+    md_file:       Path   # absolute path to the .md file
+    line_no:       int    # 1-indexed line number
+    original_url:  str    # original remote URL
+    filename:      str    # target local filename (collision-safe, "" if not downloadable)
+    assets_dir:    Path   # absolute path to this file's local assets folder
+    is_video:      bool   # True  → skip (video hosting URL)
+    already_local: bool   # True  → link is already local (not http)
+    ext_supported: bool   # True  → extension is in the allowed set
+    exists_locally: bool  # True  → file already present in assets_dir
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _is_video_url(url: str) -> bool:
+    """Return True if the URL belongs to a known video-hosting domain."""
+    try:
+        host = urllib.parse.urlparse(url).netloc.lower().lstrip("www.")
+        return any(host == v or host.endswith("." + v) for v in VIDEO_HOSTS)
+    except Exception:
+        return False
+
+
+def _url_extension(url: str) -> str:
+    """Return the lowercase file extension (without dot) from a URL."""
+    path = urllib.parse.urlparse(url).path
+    _, ext = os.path.splitext(path)
+    return ext.lstrip(".").lower()
+
+
+def _safe_filename(url: str, seen: dict) -> str:
+    """
+    Derive a filesystem-safe filename from a URL.
+    Appends a short hash when two different URLs share the same basename
+    (intra-file collision handling).
+    """
+    path     = urllib.parse.urlparse(url).path
+    basename = os.path.basename(urllib.parse.unquote(path)).split("?")[0]
+    if not basename:
+        basename = hashlib.md5(url.encode()).hexdigest()[:12] + ".bin"
+
+    if basename in seen and seen[basename] != url:
+        short = hashlib.md5(url.encode()).hexdigest()[:6]
+        root, ext = os.path.splitext(basename)
+        basename = f"{root}_{short}{ext}"
+
+    seen[basename] = url
+    return basename
+
+
+def _relative_link(md_file: Path, assets_dir: Path, filename: str) -> str:
+    """Return a relative path string from the .md file to the asset file."""
+    return str((assets_dir / filename).relative_to(md_file.parent))
+
+
+def _stem_to_subdir(stem: str, strip_prefix: str = "") -> str:
+    """
+    Derive a short, filesystem-safe subfolder name from a .md stem.
+
+    Example (with strip_prefix = "CCNA 1 v7.0 Curriculum Module "):
+      "CCNA 1 v7.0 Curriculum Module 1 - Networking Today"
+        → strip → "1 - Networking Today"
+        → sanitize → "1-Networking-Today"
+    """
+    s = stem
+    if strip_prefix and s.startswith(strip_prefix):
+        s = s[len(strip_prefix):]
+    s = s.strip(" -_")
+    # Replace spaces and filesystem-unsafe chars with hyphens
+    s = re.sub(r"[^\w\-.]", "-", s)
+    s = re.sub(r"-+", "-", s).strip("-")
+    return s or hashlib.md5(stem.encode()).hexdigest()[:8]
+
+
+
+
+def _open_pager(text: str) -> None:
+    """
+    Display *text* in a pager.
+    Fallback chain: $PAGER env → less → more → pydoc.pager → print.
+    """
+    pager_candidates = []
+    env_pager = os.environ.get("PAGER", "")
+    if env_pager:
+        pager_candidates.append(env_pager)
+    pager_candidates += ["less", "more"]
+
+    for cmd in pager_candidates:
+        exe = shutil.which(cmd.split()[0])
+        if exe:
+            try:
+                subprocess.run(
+                    cmd.split(),
+                    input=text.encode("utf-8", errors="replace"),
+                    check=False,
+                )
+                return
+            except Exception:
+                continue
+
+    # pydoc stdlib fallback
+    try:
+        pydoc.pager(text)
+        return
+    except Exception:
+        pass
+
+    # Last resort: print everything
+    print(text)
+
+
+# ---------------------------------------------------------------------------
+# Scanning
+# ---------------------------------------------------------------------------
+
+def scan_file(md_file: Path, assets_dir: Path, allowed_exts: set) -> list:
+    """
+    Parse *md_file* and return a list of AssetAction objects.
+    *assets_dir* is the per-file asset subfolder (already computed by main).
+    """
+    actions = []
+    seen    = {}  # basename → url   (per-file collision tracking)
+
+    with open(md_file, encoding="utf-8", errors="replace") as fh:
+        for line_no, line in enumerate(fh, start=1):
+            for match in _MD_IMAGE_RE.finditer(line):
+                url = match.group("url")
+                if not url.startswith("http"):
+                    continue
+
+                is_video  = _is_video_url(url)
+                ext       = _url_extension(url)
+                ext_ok    = ext in allowed_exts
+                filename  = _safe_filename(url, seen) if (ext_ok and not is_video) else ""
+                exists    = (assets_dir / filename).exists() if filename else False
+
+                actions.append(AssetAction(
+                    md_file=md_file,
+                    line_no=line_no,
+                    original_url=url,
+                    filename=filename,
+                    assets_dir=assets_dir,
+                    is_video=is_video,
+                    already_local=False,
+                    ext_supported=ext_ok,
+                    exists_locally=exists,
+                ))
+
+    return actions
+
+
+def _natural_sort_key(path: Path) -> list:
+    """
+    Sort key that orders embedded numbers numerically, so:
+      Module 2  <  Module 10  <  Module 17
+    rather than the default lexicographic:
+      Module 10  <  Module 17  <  Module 2
+    """
+    return [int(p) if p.isdigit() else p.lower()
+            for p in re.split(r"(\d+)", path.stem)]
+
+
+def collect_md_files(target: Path) -> list:
+    """Return markdown files to process. Non-recursive when target is a dir."""
+    if target.is_file():
+        return [target]
+    elif target.is_dir():
+        return sorted(target.glob("*.md"), key=_natural_sort_key)
+    else:
+        print(_c("red", f"Error: target '{target}' does not exist."), file=sys.stderr)
+        sys.exit(1)
+
+
+# ---------------------------------------------------------------------------
+# Preview helpers
+# ---------------------------------------------------------------------------
+
+def _file_stats(actions: list, mode: str, force: bool) -> dict:
+    """Compute counts for one file's actions."""
+    s = {
+        "total": len(actions),
+        "to_download": 0, "to_update": 0,
+        "skipped_video": 0, "skipped_ext": 0, "already_exist": 0,
+    }
+    for a in actions:
+        if a.is_video:
+            s["skipped_video"] += 1
+        elif not a.ext_supported:
+            s["skipped_ext"] += 1
+        else:
+            if mode in ("full", "download-only"):
+                if a.exists_locally and not force:
+                    s["already_exist"] += 1
+                else:
+                    s["to_download"] += 1
+            if mode in ("full", "update-only"):
+                s["to_update"] += 1
+    return s
+
+
+def _render_detail(actions: list, mode: str, force: bool, colour: bool = True) -> str:
+    """
+    Render the full per-asset detail view into a string.
+    When colour=False the output is plain text (safe for piping to pager).
+    """
+    c   = _c if colour else lambda _name, text: text
+    buf = io.StringIO()
+
+    prev_file = None
+    for a in actions:
+        if a.md_file != prev_file:
+            buf.write(f"\n{c('bold', '  > ' + a.md_file.name)}\n")
+            buf.write(c("grey", "  " + "─" * 62) + "\n")
+            prev_file = a.md_file
+
+        loc = f"[{a.md_file.name}:{a.line_no:>4}]"
+
+        if a.is_video:
+            buf.write(
+                f"  {c('yellow', WARN)} {c('grey', loc)}  SKIP  "
+                f"{c('yellow', a.original_url)}"
+                f"  {c('grey', '<- video link')}\n"
+            )
+            continue
+
+        if not a.ext_supported:
+            ext = _url_extension(a.original_url)
+            buf.write(
+                f"  {c('yellow', WARN)} {c('grey', loc)}  SKIP  "
+                f"{c('grey', a.original_url)}"
+                f"  {c('grey', f'<- unsupported ext (.{ext})')}\n"
+            )
+            continue
+
+        rel = _relative_link(a.md_file, a.assets_dir, a.filename)
+
+        if mode in ("full", "download-only"):
+            if a.exists_locally and not force:
+                buf.write(
+                    f"  {c('grey', TICK)} {c('grey', loc)}  EXISTS    {c('grey', rel)}  (skip)\n"
+                )
+            else:
+                buf.write(
+                    f"  {c('green', TICK)} {c('grey', loc)}  DOWNLOAD -> {c('green', rel)}\n"
+                    f"  {' ' * (len(loc) + 6)}  from {c('grey', a.original_url)}\n"
+                )
+
+        if mode in ("full", "update-only"):
+            mark = c("green", TICK) if a.exists_locally else c("red", CROSS + "(missing!)")
+            buf.write(
+                f"  {mark} {c('grey', loc)}  UPDATE   link -> {c('cyan', rel)}\n"
+            )
+
+    return buf.getvalue()
+
+
+def print_summary_table(by_file: dict, mode: str, force: bool) -> dict:
+    """
+    Print a compact one-line-per-file summary table.
+    Returns aggregated totals dict.
+    """
+    COL = 52  # filename column width
+    totals = {"to_download": 0, "to_update": 0,
+              "skipped_video": 0, "skipped_ext": 0, "already_exist": 0}
+
+    print()
+    print(_c("bold", "  [PREVIEW] Summary"))
+    print(_c("grey", "  " + "─" * (COL + 38)))
+    print(_c("bold",
+        f"  {'File':<{COL}}  {'Found':>5}  {'DL':>4}  {'Update':>6}  {'Skip':>4}"
+    ))
+    print(_c("grey", "  " + "─" * (COL + 38)))
+
+    for md_file, actions in by_file.items():
+        s    = _file_stats(actions, mode, force)
+        for k in totals:
+            totals[k] += s[k]
+
+        name = md_file.name
+        if len(name) > COL:
+            name = name[:COL - 3] + "..."
+
+        skip   = s["skipped_video"] + s["skipped_ext"]
+        dl_str = str(s["to_download"]) if mode in ("full", "download-only") else "-"
+        up_str = str(s["to_update"])   if mode in ("full", "update-only")   else "-"
+
+        # Colour-code rows that have actionable items
+        row = f"  {name:<{COL}}  {s['total']:>5}  {dl_str:>4}  {up_str:>6}  {skip:>4}"
+        if s["to_download"] > 0 or s["to_update"] > 0:
+            print(row)
+        else:
+            print(_c("grey", row))
+
+    print(_c("grey", "  " + "─" * (COL + 38)))
+
+    parts = []
+    if mode in ("full", "download-only"):
+        parts.append(_c("green",  f"{totals['to_download']} to download"))
+        if totals["already_exist"]:
+            parts.append(_c("grey",   f"{totals['already_exist']} already exist"))
+    if mode in ("full", "update-only"):
+        parts.append(_c("cyan",   f"{totals['to_update']} links to update"))
+    if totals["skipped_video"]:
+        parts.append(_c("yellow", f"{totals['skipped_video']} video links skipped"))
+    if totals["skipped_ext"]:
+        parts.append(_c("yellow", f"{totals['skipped_ext']} unsupported ext skipped"))
+
+    print("  Total: " + " | ".join(parts))
+    print()
+    return totals
+
+
+def _run_file_by_file(by_file: dict, mode: str, force: bool) -> list:
+    """
+    Walk the user through each file interactively.
+    Returns list of approved AssetAction objects (skipped files excluded).
+    """
+    approved = []
+    files    = list(by_file.items())
+    total    = len(files)
+
+    print(_c("bold",  "\n  [FILE-BY-FILE REVIEW]"))
+    print(_c("grey",  "  y = process   s = skip this file   a = abort all\n"))
+
+    for i, (md_file, actions) in enumerate(files, start=1):
+        s    = _file_stats(actions, mode, force)
+        skip = s["skipped_video"] + s["skipped_ext"]
+        print(_c("bold", f"  [{i}/{total}]  {md_file.name}"))
+        print(_c("grey",
+            f"          Found: {s['total']}  |  "
+            f"DL: {s['to_download']}  |  "
+            f"Update: {s['to_update']}  |  "
+            f"Skip: {skip}"
+        ))
+        detail = _render_detail(actions, mode, force, colour=True)
+        print(detail)
+
+        try:
+            ans = input(_c("bold",
+                "  [y] Yes, process  [s] Skip this file  [a] Abort all: ")).strip().lower()
+        except (KeyboardInterrupt, EOFError):
+            print()
+            ans = "a"
+
+        if ans in ("a", "abort"):
+            print(_c("yellow", "\n  Aborted. No files were changed."))
+            sys.exit(0)
+        elif ans in ("s", "skip"):
+            print(_c("grey", "    Skipped.\n"))
+        else:
+            approved.extend(actions)
+            print(_c("green", "    Approved.\n"))
+
+    return approved
+
+
+def _show_preview_menu(all_actions: list, by_file: dict,
+                       mode: str, force: bool, yes: bool) -> list:
+    """
+    Level-1: always print summary table.
+    Level-2 (multi-file only): offer  [d]etail / [f]ile-by-file / [g]o / [a]bort menu.
+    Returns the final approved action list.
+    """
+    totals = print_summary_table(by_file, mode, force)
+
+    actionable = totals["to_download"] + totals["to_update"]
+    if actionable == 0:
+        print(_c("grey", "  Nothing to do (all assets already exist or no actionable items)."))
+        sys.exit(0)
+
+    # --yes: skip all interactive prompts
+    if yes:
+        print(_c("grey", "  --yes flag set, proceeding automatically...\n"))
+        return all_actions
+
+    # ── Single file: lightweight prompt ──────────────────────────────────────
+    if len(by_file) == 1:
+        print(_c("cyan", "  [d] Show detail   [g] Go ahead   [a] Abort"))
+        while True:
+            try:
+                ans = input(_c("bold", "  Choice [d/g/a]: ")).strip().lower()
+            except (KeyboardInterrupt, EOFError):
+                ans = "a"
+
+            if ans == "d":
+                print(_render_detail(all_actions, mode, force, colour=True))
+            elif ans in ("g", "y", "yes", ""):
+                return all_actions
+            elif ans in ("a", "q", "n", "no", "abort"):
+                print(_c("yellow", "\n  Aborted."))
+                sys.exit(0)
+
+    # ── Multi-file: full menu ─────────────────────────────────────────────────
+    def _print_menu():
+        print(_c("cyan",  "  [d] Detailed view (opens pager)"))
+        print(_c("cyan",  "  [f] File-by-file review"))
+        print(_c("green", "  [g] Go ahead (trust summary)"))
+        print(_c("yellow","  [a] Abort"))
+
+    _print_menu()
+    while True:
+        try:
+            ans = input(_c("bold", "  Choice [d/f/g/a]: ")).strip().lower()
+        except (KeyboardInterrupt, EOFError):
+            ans = "a"
+
+        if ans == "d":
+            plain = _render_detail(all_actions, mode, force, colour=False)
+            _open_pager(plain)
+            # Re-show menu after pager closes
+            print()
+            _print_menu()
+        elif ans == "f":
+            return _run_file_by_file(by_file, mode, force)
+        elif ans in ("g", "y", "yes", ""):
+            return all_actions
+        elif ans in ("a", "q", "n", "no", "abort"):
+            print(_c("yellow", "\n  Aborted. No files were changed."))
+            sys.exit(0)
+        else:
+            print(_c("grey", "  Please type d, f, g, or a."))
+
+
+# ---------------------------------------------------------------------------
+# Execution
+# ---------------------------------------------------------------------------
+
+def download_asset(url: str, dest: Path, verbose: bool) -> bool:
+    """Download *url* to *dest*. Returns True on success."""
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp, open(dest, "wb") as fh:
+            shutil.copyfileobj(resp, fh)
+        if verbose:
+            print(_c("green", f"    Downloaded: {dest.name}"))
+        return True
+    except urllib.error.HTTPError as e:
+        print(_c("red", f"    FAILED HTTP {e.code}  {url}"))
+        return False
+    except Exception as e:
+        print(_c("red", f"    FAILED {url}: {e}"))
+        return False
+
+
+def update_links_in_file(md_file: Path, actions: list,
+                          mode: str, force: bool, verbose: bool) -> int:
+    """
+    Rewrite remote image URLs in *md_file* to local relative paths.
+    Original URL is preserved as an HTML comment on the next line:
+        ![alt](Assets/sub/image.jpg)
+        <!-- original: https://... -->
+    Returns the number of links updated.
+    """
+    with open(md_file, encoding="utf-8", errors="replace") as fh:
+        content = fh.read()
+
+    # Build URL → local-relative-path map
+    url_map: dict = {}
+    for a in actions:
+        if a.is_video or not a.ext_supported or not a.filename:
+            continue
+        if mode == "update-only" and not a.exists_locally:
+            continue
+        url_map[a.original_url] = _relative_link(md_file, a.assets_dir, a.filename)
+
+    if not url_map:
+        return 0
+
+    updated = 0
+
+    def _replacer(match: re.Match) -> str:
+        nonlocal updated
+        url = match.group("url")
+        if url in url_map:
+            updated += 1
+            alt        = match.group("alt")
+            local_path = url_map[url]
+            new_link   = f"![{alt}]({local_path})\n<!-- original: {url} -->"
+            if verbose:
+                print(_c("cyan", f"    Updated: {url}\n             -> {local_path}"))
+            return new_link
+        return match.group(0)
+
+    new_content = _MD_IMAGE_RE.sub(_replacer, content)
+
+    if new_content != content:
+        backup = md_file.with_suffix(md_file.suffix + ".bak")
+        shutil.copy2(md_file, backup)
+        if verbose:
+            print(_c("grey", f"    Backup saved: {backup.name}"))
+        with open(md_file, "w", encoding="utf-8") as fh:
+            fh.write(new_content)
+
+    return updated
+
+
+def execute(approved_actions: list, mode: str, force: bool, verbose: bool) -> None:
+    """Run downloads and/or link updates for the approved action list."""
+    by_file: dict = {}
+    for a in approved_actions:
+        by_file.setdefault(a.md_file, []).append(a)
+
+    total_dl_ok   = 0
+    total_dl_fail = 0
+    total_updated = 0
+
+    for md_file, actions in by_file.items():
+        print(_c("bold", f"\n  > {md_file.name}"))
+
+        if mode in ("full", "download-only"):
+            # Count how many assets actually need downloading for the progress counter
+            to_dl = [
+                a for a in actions
+                if not a.is_video and a.ext_supported and a.filename
+                and not (a.exists_locally and not force)
+            ]
+            dl_done = 0
+            dl_total = len(to_dl)
+
+            for a in actions:
+                if a.is_video or not a.ext_supported or not a.filename:
+                    continue
+                dest = a.assets_dir / a.filename
+                if dest.exists() and not force:
+                    if verbose:
+                        print(_c("grey", f"    Exists, skipping: {a.filename}"))
+                    continue
+                dl_done += 1
+                # Always show a real-time progress line
+                print(_c("grey",
+                    f"    [{dl_done}/{dl_total}] Downloading: {a.filename}"),
+                    end="", flush=True)
+                ok = download_asset(a.original_url, dest, verbose)
+                if ok:
+                    total_dl_ok += 1
+                    if not verbose:
+                        print(_c("green", "  ✓"))
+                else:
+                    total_dl_fail += 1
+                    if not verbose:
+                        print(_c("red", "  ✗"))
+
+        if mode in ("full", "update-only"):
+            n = update_links_in_file(md_file, actions, mode, force, verbose)
+            total_updated += n
+            print(_c("cyan", f"    Links updated: {n}"))
+
+    print()
+    print(_c("bold", "  Done!"))
+    if mode in ("full", "download-only"):
+        fail_str = (f"  Failed: {_c('red', str(total_dl_fail))}" if total_dl_fail else "")
+        print(f"  Downloaded : {_c('green', str(total_dl_ok))}{fail_str}")
+    if mode in ("full", "update-only"):
+        print(f"  Links updated: {_c('cyan', str(total_updated))}")
+    print()
+
+
+# ---------------------------------------------------------------------------
+# Backup restore
+# ---------------------------------------------------------------------------
+
+def restore_backups(target: Path, yes: bool) -> None:
+    """
+    Find all .md.bak files under *target* (non-recursive for dirs),
+    show a preview, confirm, then copy each .bak back over its .md file.
+    The .bak file is kept after restore so it can be used again.
+    """
+    if target.is_file():
+        bak_files = [target.with_suffix(".md.bak")] if target.suffix == ".md" else []
+        bak_files = [b for b in bak_files if b.exists()]
+    else:
+        bak_files = sorted(target.glob("*.md.bak"), key=_natural_sort_key)
+
+    prog_name = os.path.basename(sys.argv[0])
+    print(_c("bold", f"\n  {prog_name} v{VERSION}  [RESTORE MODE]"))
+    print(_c("grey",  f"  Target : {target}"))
+    print()
+
+    if not bak_files:
+        print(_c("yellow", "  No .md.bak files found. Nothing to restore."))
+        sys.exit(0)
+
+    # Preview
+    print(_c("bold", "  [PREVIEW] Backup files found:"))
+    print(_c("grey",  "  " + "-" * 60))
+    for bak in bak_files:
+        md = bak.with_suffix("")          # strips the .bak, leaving .md
+        exists = "exists" if md.exists() else _c("yellow", "missing - will create")
+        print(f"  {_c('cyan', bak.name)}")
+        print(_c("grey", f"    -> restore to: {md.name}  ({exists})"))
+    print(_c("grey",  "  " + "-" * 60))
+    print(f"  {len(bak_files)} file(s) will be restored.")
+    print(_c("grey",  "  (Backup files are kept after restore.)"))
+    print()
+
+    # Confirm
+    if yes:
+        print(_c("grey", "  --yes flag set, proceeding automatically...\n"))
+    else:
+        try:
+            ans = input(_c("bold", "  Restore all? [y/N]: ")).strip().lower()
+        except (KeyboardInterrupt, EOFError):
+            print()
+            ans = "n"
+        if ans not in ("y", "yes"):
+            print(_c("yellow", "\n  Aborted. No files were changed."))
+            sys.exit(0)
+
+    # Execute
+    ok_count   = 0
+    fail_count = 0
+    for bak in bak_files:
+        md = bak.with_suffix("")
+        try:
+            shutil.copy2(bak, md)
+            print(f"  {_c('green', '✓')} Restored: {_c('cyan', md.name)}")
+            ok_count += 1
+        except Exception as e:
+            print(f"  {_c('red', '✗')} Failed:   {md.name}  ({e})")
+            fail_count += 1
+
+    print()
+    print(_c("bold", "  Done!"))
+    print(f"  Restored: {_c('green', str(ok_count))}"
+          + (f"  Failed: {_c('red', str(fail_count))}" if fail_count else ""))
+    print()
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Find remote static-asset links in Markdown files, download them\n"
+            "locally, and rewrite the links to relative paths.\n\n"
+            "Always shows a summary table first and asks for confirmation."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+ASSET DIRECTORY STRUCTURE
+--------------------------
+Directory target  →  per-file subfolders (default):
+  Assets/
+    Module-1-Networking-Today/   ← derived from the .md file stem
+      2020-05-20_201301.jpg
+      End-Devices.gif
+    Module-2-Switch-Config/
+      diagram.jpg
+
+Single-file target  →  flat folder:
+  Assets/
+    image.jpg
+
+Use --flat-assets to always use a single flat folder.
+
+LINK FORMAT AFTER UPDATE
+--------------------------
+  ![](Assets/Module-1-Networking-Today/image.jpg)
+  <!-- original: https://... -->
+
+EXAMPLES
+--------
+  ./%(prog)s "CCNA_Sem_1/Module1.md"
+  ./%(prog)s CCNA_Sem_1/
+  ./%(prog)s CCNA_Sem_1/ --download-only
+  ./%(prog)s CCNA_Sem_1/ --update-only
+  ./%(prog)s CCNA_Sem_1/ --flat-assets
+  ./%(prog)s CCNA_Sem_1/ --assets-dir media
+  ./%(prog)s CCNA_Sem_1/ --strip-prefix "CCNA 1 v7.0 Curriculum "
+  ./%(prog)s CCNA_Sem_1/ --force
+  ./%(prog)s CCNA_Sem_1/ --yes
+  ./%(prog)s CCNA_Sem_1/ --verbose
+
+NOTES
+-----
+* When --strip-prefix is not provided, the full .md filename stem is used
+  as the per-file asset subfolder name.
+* When --strip-prefix TEXT is provided, that prefix is stripped from every
+  stem before deriving the subfolder name.
+* A .md.bak backup is created before any link rewrites.
+* The script is idempotent: already-local links are never re-processed.
+* Requires Python 3.8+. No pip install needed (stdlib only).
+""",
+    )
+    parser.add_argument(
+        "target",
+        help="Path to a .md file OR a directory containing .md files (non-recursive).",
+    )
+    parser.add_argument(
+        "--download-only", action="store_true",
+        help="Download assets but do NOT modify the Markdown file.",
+    )
+    parser.add_argument(
+        "--update-only", action="store_true",
+        help="Rewrite links only (no downloading). Assets must already exist locally.",
+    )
+    parser.add_argument(
+        "--assets-dir", default="Assets", metavar="NAME",
+        help="Assets folder name (default: 'Assets'). Relative to target.",
+    )
+    parser.add_argument(
+        "--flat-assets", action="store_true",
+        help=(
+            "Use a single flat assets folder instead of per-file subfolders "
+            "(only relevant when target is a directory)."
+        ),
+    )
+    parser.add_argument(
+        "--strip-prefix", default=None, metavar="TEXT",
+        help=(
+            "Strip this prefix from .md stems when naming per-file asset subfolders. "
+            "If omitted, the full .md stem is used as the subfolder name."
+        ),
+    )
+    parser.add_argument(
+        "--extensions",
+        default=",".join(sorted(DEFAULT_EXTENSIONS)),
+        metavar="EXT,...",
+        help=(
+            "Comma-separated extensions to treat as downloadable assets. "
+            f"Default: {','.join(sorted(DEFAULT_EXTENSIONS))}"
+        ),
+    )
+    parser.add_argument(
+        "--force", action="store_true",
+        help="Re-download assets even if they already exist locally.",
+    )
+    parser.add_argument(
+        "--yes", "-y", action="store_true",
+        help="Skip all confirmation prompts (good for scripting / CI).",
+    )
+    parser.add_argument(
+        "--verbose", "-v", action="store_true",
+        help="Print a line-by-line log of every action.",
+    )
+    parser.add_argument(
+        "--restore", action="store_true",
+        help=(
+            "Restore .md.bak backup files, replacing the current .md files. "
+            "Mutually exclusive with all other operation modes."
+        ),
+    )
+    parser.add_argument(
+        "--version", action="version", version=f"%(prog)s {VERSION}",
+    )
+    return parser
+
+
+def main() -> None:
+    parser = build_parser()
+    args   = parser.parse_args()
+
+    # Validate mutually exclusive flags
+    if args.download_only and args.update_only:
+        parser.error("--download-only and --update-only are mutually exclusive.")
+    if args.restore and any([args.download_only, args.update_only,
+                              args.flat_assets, args.force]):
+        parser.error("--restore cannot be combined with other operation flags.")
+
+    # --restore is a completely separate flow
+    if args.restore:
+        target = Path(args.target).expanduser().resolve()
+        restore_backups(target, args.yes)
+        sys.exit(0)
+
+    mode = "full"
+    if args.download_only:
+        mode = "download-only"
+    elif args.update_only:
+        mode = "update-only"
+
+    target        = Path(args.target).expanduser().resolve()
+    allowed_exts  = {e.strip().lstrip(".").lower() for e in args.extensions.split(",")}
+    is_single_file = target.is_file()
+
+    # Collect files
+    md_files = collect_md_files(target)
+    if not md_files:
+        print(_c("yellow", f"No .md files found in '{target}'."))
+        sys.exit(0)
+
+    # Assets root dir
+    assets_root = target.parent / args.assets_dir if is_single_file else target / args.assets_dir
+
+    # Per-file subdirectory logic (only for directory target)
+    use_subdirs = not is_single_file and not args.flat_assets
+
+    strip_prefix = ""
+    if use_subdirs and args.strip_prefix:
+        strip_prefix = args.strip_prefix
+
+    # Print startup banner
+    print(_c("bold", f"\n  {parser.prog} v{VERSION}"))
+    print(_c("grey", f"  Target       : {target}"))
+    print(_c("grey", f"  Mode         : {mode}"))
+    print(_c("grey", f"  Assets root  : {assets_root}"))
+    if use_subdirs:
+        layout = "per-file subfolders"
+        if strip_prefix:
+            layout += f'  (strip prefix: "{strip_prefix}")'
+        else:
+            layout += "  (full stem as subfolder name)"
+    else:
+        layout = "flat"
+    print(_c("grey", f"  Layout       : {layout}"))
+    print(_c("grey", f"  Files        : {len(md_files)} markdown file(s)"))
+
+    # Scan each file with its own assets_dir
+    all_actions: list = []
+    for md_file in md_files:
+        if use_subdirs:
+            subdir       = _stem_to_subdir(md_file.stem, strip_prefix)
+            file_assets  = assets_root / subdir
+        else:
+            file_assets  = assets_root
+        all_actions.extend(scan_file(md_file, file_assets, allowed_exts))
+
+    if not all_actions:
+        print(_c("yellow", "\n  No remote asset links found. Nothing to do."))
+        sys.exit(0)
+
+    # Group by file for preview and interactive modes
+    by_file: dict = {}
+    for a in all_actions:
+        by_file.setdefault(a.md_file, []).append(a)
+
+    # Preview + confirm → get approved list
+    approved = _show_preview_menu(all_actions, by_file, mode, args.force, args.yes)
+
+    # Execute
+    execute(approved, mode, args.force, args.verbose)
+
+
+if __name__ == "__main__":
+    main()
