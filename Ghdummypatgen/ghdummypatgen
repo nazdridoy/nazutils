@@ -1,0 +1,64 @@
+#!/usr/bin/env python3
+"""
+ghdummypatgen
+================================
+Generates randomized, mock GitHub Personal Access Tokens
+and workflow keys for testing.
+
+Run  ./ghdummypatgen --help  for full usage.
+"""
+import argparse
+import random
+import string
+import sys
+
+VERSION = "1.0.0"
+
+def generate_ghp_key():
+    return f"ghp_{''.join(random.choices(string.ascii_letters + string.digits, k=36))}"
+
+def generate_ghs_key():
+    return f"ghs_{''.join(random.choices(string.ascii_letters + string.digits, k=36))}"
+
+def generate_github_pat_key():
+    return f"github_pat_{''.join(random.choices(string.ascii_letters + string.digits, k=22))}_{''.join(random.choices(string.ascii_letters + string.digits, k=59))}"
+
+def generate_keys(key_type, num_keys):
+    if key_type == "ghp":
+        generator_function = generate_ghp_key
+    elif key_type == "ghs":
+        generator_function = generate_ghs_key
+    elif key_type == "github_pat":
+        generator_function = generate_github_pat_key
+    else:
+        print(f"Invalid key type: {key_type}")
+        return
+
+    for _ in range(num_keys):
+        print(generator_function())
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Generate randomized, mock GitHub Personal Access Tokens and workflow keys."
+    )
+    parser.add_argument(
+        "num_keys",
+        type=int,
+        nargs="?",
+        default=5,
+        help="Number of keys to generate for each type (default: 5)"
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {VERSION}"
+    )
+    args = parser.parse_args()
+
+    # Generate keys for each type
+    generate_keys("ghp", args.num_keys)
+    generate_keys("ghs", args.num_keys)
+    generate_keys("github_pat", args.num_keys)
+
+if __name__ == "__main__":
+    main()
