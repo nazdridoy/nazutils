@@ -1,0 +1,109 @@
+#!/usr/bin/env python3
+"""
+seqrename
+================================
+Sequentially batch-renames files in a directory with customizable
+prefix, padding, gap-filling, and interactive previews.
+
+Run  ./seqrename --help  for full usage.
+"""
+import argparse
+import os
+import re
+import sys
+
+VERSION = "1.0.0"
+
+def main():
+    parser = argparse.ArgumentParser(
+        description='Sequentially rename files in a directory, with option to fill sequence gaps.'
+    )
+    parser.add_argument('-p', '--prefix', required=True, help='Prefix for new filenames')
+    parser.add_argument('-n', '--digits', type=int, required=True, help='Number of digits for padding')
+    parser.add_argument('-t', '--path', default='.', help='Target directory')
+    parser.add_argument('-f', '--fill-gaps', action='store_true', help='Fill gaps in sequence first')
+    parser.add_argument('-y', '--yes', action='store_true', help='Skip confirmation prompt')
+    parser.add_argument('--version', action='version', version=f'%(prog)s {VERSION}')
+
+    args = parser.parse_args()
+
+    script_name = os.path.basename(sys.argv[0])
+    path = os.path.abspath(args.path)
+    prefix = args.prefix
+    digits = args.digits
+    fill_gaps = args.fill_gaps
+
+    pattern = re.compile(rf'^{re.escape(prefix)}-(\d+)\.[^.]+$')
+    existing_nums = set()
+    max_num = 0
+    for f in os.listdir(path):
+        match = pattern.match(f)
+        if match:
+            num = int(match.group(1))
+            existing_nums.add(num)
+            max_num = max(max_num, num)
+
+    missing_nums = []
+    if fill_gaps:
+        missing_nums = [n for n in range(1, max_num + 1) if n not in existing_nums]
+
+    renames = []
+    skipped = 0
+
+    for filename in sorted(os.listdir(path)):
+        filepath = os.path.join(path, filename)
+        if not os.path.isfile(filepath):
+            continue
+
+        if filename == script_name or filename.startswith('.'):
+            continue
+
+        if pattern.match(filename):
+            skipped += 1
+            continue
+
+        ext = ''
+        if '.' in filename:
+            ext = '.' + filename.rsplit('.', 1)[1]
+
+        if fill_gaps and missing_nums:
+            counter = missing_nums.pop(0)
+        else:
+            max_num += 1
+            counter = max_num
+
+        new_filename = f"{prefix}-{str(counter).zfill(digits)}{ext}"
+        new_filepath = os.path.join(path, new_filename)
+
+        if os.path.exists(new_filepath):
+            print(f"\033[0;31m[COLLISION ERROR]\033[0m Cannot rename '{filename}' to '{new_filename}'", file=sys.stderr)
+            print("Aborting sequence to safeguard your data.", file=sys.stderr)
+            sys.exit(1)
+
+        renames.append((filepath, filename, new_filepath, new_filename))
+
+    print(f"\n\033[1;36m--- Preview: {len(renames)} files to rename ---\033[0m")
+    for _, old_name, _, new_name in renames:
+        print(f"  \033[90m{old_name}\033[0m \033[32m->\033[0m \033[90m{new_name}\033[0m")
+
+    if not args.yes:
+        print()
+        print(f"(\033[1;33m-y\033[0m to skip confirmation, \033[1;31mCtrl+C\033[0m to abort)")
+        try:
+            response = input("\033[1mProceed? [y/N]\033[0m ").strip().lower()
+            if response != 'y':
+                print("Aborted.")
+                sys.exit(0)
+        except EOFError:
+            print("Aborted.")
+            sys.exit(0)
+
+    renamed = 0
+    for filepath, _, new_filepath, new_name in renames:
+        os.rename(filepath, new_filepath)
+        renamed += 1
+
+    print(f"\n\033[1;32m--- Successfully processed {renamed + skipped} files ({renamed} renamed, {skipped} skipped)! ---\033[0m")
+
+if __name__ == '__main__':
+    main()
