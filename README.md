@@ -14,6 +14,7 @@ Each utility is self-contained in its own directory with a dedicated `README.md`
 | **`mdassetdl`** | [`Mdassetdl/`](./Mdassetdl) | Python | Downloads remote static assets (images, GIFs) in Markdown notes locally and rewrites URL paths to relative links. |
 | **`mdtablefix`** | [`Mdtablefix/`](./Mdtablefix) | Python | Scans and fixes Markdown tables that lack a preceding blank line required for proper rendering. |
 | **`ghdummypatgen`** | [`Ghdummypatgen/`](./Ghdummypatgen) | Python | Generates randomized, mock GitHub Personal Access Tokens and workflow keys (`ghp_`, `ghs_`, `github_pat_`) for testing. |
+| **`tab2callout`** | [`Tab2callout/`](./Tab2callout) | Python | Reads HTML tab widgets (`wps_tabs` format) from stdin and converts each tab into an Obsidian-style collapsible callout. |
 | **`base64imgbank`** | [`Base64imgbank/`](./Base64imgbank) | Bash | Extracts inline base64 images from Markdown files to a separate image bank note, replacing them with clean Obsidian-style backlinks. |
 | **`fontstyle`** | [`Fontest/`](./Fontest) | Bash | Displays a colorized terminal test pattern checking ANSI escape sequences (bold, italic, colors, etc.). |
 | **`fontsymbols`** | [`Fontest/`](./Fontest) | Bash | Renders a table preview of various Nerd Fonts icon ranges to check glyph compatibility and boundary clipping. |
