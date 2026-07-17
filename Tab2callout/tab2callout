@@ -1,0 +1,435 @@
+#!/usr/bin/env python3
+"""
+tab2callout
+================================
+Reads HTML tab widgets (wps_tabs format) from stdin and converts
+each tab into an Obsidian-style collapsible callout — no external
+dependencies required.
+
+Run  ./tab2callout --help  for full usage.
+"""
+
+import argparse
+import sys
+import re
+from html.parser import HTMLParser
+
+VERSION = "1.0.0"
+
+
+# ---------------------------------------------------------------------------
+# Lightweight HTML tree
+# ---------------------------------------------------------------------------
+
+class _Node:
+    """Simple tree node used during parsing."""
+
+    def __init__(self, tag, attrs):
+        self.tag = tag
+        self.attrs = dict(attrs)
+        self.children = []   # list of _Node or str
+        self.parent = None
+
+    def get(self, attr, default=""):
+        return self.attrs.get(attr, default)
+
+    def text(self):
+        """Return concatenated text of all descendants."""
+        parts = []
+        for c in self.children:
+            if isinstance(c, str):
+                parts.append(c)
+            else:
+                parts.append(c.text())
+        return "".join(parts)
+
+    def find_all(self, tag):
+        results = []
+        for c in self.children:
+            if isinstance(c, _Node):
+                if c.tag == tag:
+                    results.append(c)
+                results.extend(c.find_all(tag))
+        return results
+
+    def has_class(self, cls):
+        return cls in self.get("class", "").split()
+
+
+class _TreeBuilder(HTMLParser):
+    """Builds a lightweight element tree from HTML."""
+
+    # Self-closing / void elements
+    VOID_TAGS = {
+        "area", "base", "br", "col", "embed", "hr", "img", "input",
+        "link", "meta", "param", "source", "track", "wbr",
+    }
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self._root = _Node("__root__", [])
+        self._stack = [self._root]
+
+    def handle_starttag(self, tag, attrs):
+        node = _Node(tag, attrs)
+        node.parent = self._stack[-1]
+        self._stack[-1].children.append(node)
+        if tag not in self.VOID_TAGS:
+            self._stack.append(node)
+
+    def handle_endtag(self, tag):
+        for i in range(len(self._stack) - 1, 0, -1):
+            if self._stack[i].tag == tag:
+                self._stack = self._stack[:i]
+                return
+
+    def handle_data(self, data):
+        self._stack[-1].children.append(data)
+
+    @property
+    def root(self):
+        return self._root
+
+
+# ---------------------------------------------------------------------------
+# Node → Markdown conversion
+# ---------------------------------------------------------------------------
+
+def _clean(text):
+    """Collapse whitespace for inline text."""
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _node_to_md(node, list_depth=0, ordered=False, order_idx=None):
+    """Recursively convert a _Node (or str) to a Markdown string."""
+
+    if isinstance(node, str):
+        return node
+
+    tag = node.tag
+
+    # --- Skip invisible/metadata tags -------------------------------------
+    if tag in ("script", "style", "button", "svg", "path",
+               "noscript", "head", "meta", "link"):
+        return ""
+
+    # --- Structural wrappers (just render children) -----------------------
+    if tag in ("div", "section", "article", "header", "footer",
+               "main", "nav", "aside", "figure", "figcaption",
+               "span", "html", "body"):
+        return _children_to_md(node, list_depth=list_depth)
+
+    # --- Paragraphs -------------------------------------------------------
+    if tag == "p":
+        inner = _clean(_children_inline(node))
+        return (inner + "\n\n") if inner else ""
+
+    # --- Headings ---------------------------------------------------------
+    if tag in ("h1", "h2", "h3", "h4", "h5", "h6"):
+        level = int(tag[1])
+        inner = _clean(_children_inline(node))
+        return "#" * level + " " + inner + "\n\n"
+
+    # --- Inline formatting ------------------------------------------------
+    if tag in ("strong", "b"):
+        inner = _clean(_children_inline(node))
+        return f"**{inner}**" if inner else ""
+
+    if tag in ("em", "i"):
+        inner = _clean(_children_inline(node))
+        return f"*{inner}*" if inner else ""
+
+    if tag == "code":
+        return f"`{node.text()}`"
+
+    if tag == "br":
+        return "  \n"
+
+    if tag == "hr":
+        return "\n---\n\n"
+
+    if tag == "a":
+        href = node.get("href", "#")
+        inner = _clean(_children_inline(node))
+        if href and href != "#" and inner:
+            return f"[{inner}]({href})"
+        return inner
+
+    # --- Images -----------------------------------------------------------
+    if tag == "img":
+        src = node.get("src", "")
+        alt = node.get("alt", "")
+        return f"![{alt}]({src})\n\n" if src else ""
+
+    # --- Code blocks ------------------------------------------------------
+    if tag == "pre":
+        raw = node.text().strip("\n")
+        return f"```\n{raw}\n```\n\n"
+
+    # --- Lists ------------------------------------------------------------
+    if tag == "ul":
+        return _list_to_md(node, ordered=False, depth=list_depth)
+
+    if tag == "ol":
+        return _list_to_md(node, ordered=True, depth=list_depth)
+
+    if tag == "li":
+        indent = "  " * list_depth
+        prefix = f"{order_idx}. " if (ordered and order_idx is not None) else "- "
+        sub_list_md = ""
+        inline_parts = []
+        for child in node.children:
+            if isinstance(child, _Node) and child.tag in ("ul", "ol"):
+                sub_list_md += _list_to_md(
+                    child,
+                    ordered=(child.tag == "ol"),
+                    depth=list_depth + 1,
+                )
+            else:
+                inline_parts.append(_node_to_md(child, list_depth=list_depth))
+        inline = _clean("".join(inline_parts))
+        result = indent + prefix + inline + "\n"
+        if sub_list_md:
+            result += sub_list_md
+        return result
+
+    # --- Tables -----------------------------------------------------------
+    if tag == "table":
+        return _table_to_md(node)
+
+    # Fallback: render children
+    return _children_to_md(node, list_depth=list_depth)
+
+
+def _children_to_md(node, list_depth=0):
+    return "".join(
+        _node_to_md(child, list_depth=list_depth)
+        for child in node.children
+    )
+
+
+def _children_inline(node):
+    """Render children as inline markdown (no block wrapping)."""
+    parts = []
+    for child in node.children:
+        if isinstance(child, str):
+            parts.append(child)
+        else:
+            parts.append(_node_to_md(child))
+    return "".join(parts)
+
+
+def _list_to_md(ul_node, ordered=False, depth=0):
+    items = [c for c in ul_node.children
+             if isinstance(c, _Node) and c.tag == "li"]
+    return "".join(
+        _node_to_md(item, list_depth=depth, ordered=ordered, order_idx=i)
+        for i, item in enumerate(items, start=1)
+    )
+
+
+def _table_to_md(table_node):
+    """Convert an HTML table to a GFM markdown table."""
+    rows = []
+
+    def collect_rows(node):
+        for child in node.children:
+            if isinstance(child, _Node):
+                if child.tag == "tr":
+                    rows.append(child)
+                elif child.tag in ("thead", "tbody", "tfoot",
+                                   "table", "colgroup"):
+                    collect_rows(child)
+
+    collect_rows(table_node)
+    if not rows:
+        return ""
+
+    md_rows = []
+    for row in rows:
+        cells = [c for c in row.children
+                 if isinstance(c, _Node) and c.tag in ("th", "td")]
+        md_rows.append([_clean(_children_inline(c)) for c in cells])
+
+    col_count = max(len(r) for r in md_rows)
+    for r in md_rows:
+        while len(r) < col_count:
+            r.append("")
+
+    lines = [
+        "| " + " | ".join(md_rows[0]) + " |",
+        "| " + " | ".join(["---"] * col_count) + " |",
+    ]
+    for row in md_rows[1:]:
+        lines.append("| " + " | ".join(row) + " |")
+
+    return "\n".join(lines) + "\n\n"
+
+
+# ---------------------------------------------------------------------------
+# Tab extraction
+# ---------------------------------------------------------------------------
+
+def extract_tabs(root):
+    """
+    Find every <ul class="wps_tabs"> and the paired
+    <div class="tab_container">, then return a list of
+    (tab_name, content_node) tuples (one entry per tab).
+    """
+    results = []
+
+    def walk(node):
+        if not isinstance(node, _Node):
+            return
+        if node.tag == "ul" and node.has_class("wps_tabs"):
+            # Collect tab labels from <li><a>
+            tab_names = [_clean(a.text()) for a in node.find_all("a")]
+
+            # Find the following div.tab_container among the parent's siblings
+            parent = node.parent
+            if parent is None:
+                return
+
+            ul_idx = next(
+                (i for i, s in enumerate(parent.children) if s is node),
+                None,
+            )
+            if ul_idx is None:
+                return
+
+            container = next(
+                (
+                    s for s in parent.children[ul_idx + 1:]
+                    if isinstance(s, _Node)
+                    and s.tag == "div"
+                    and s.has_class("tab_container")
+                ),
+                None,
+            )
+            if container is None:
+                return
+
+            content_divs = [
+                c for c in container.children
+                if isinstance(c, _Node)
+                and c.tag == "div"
+                and c.has_class("tab_content")
+            ]
+
+            for i, name in enumerate(tab_names):
+                content = content_divs[i] if i < len(content_divs) else None
+                results.append((name, content))
+
+        for child in node.children:
+            walk(child)
+
+    walk(root)
+    return results
+
+
+# ---------------------------------------------------------------------------
+# Content node → callout body
+# ---------------------------------------------------------------------------
+
+def content_to_callout_lines(content_node):
+    if content_node is None:
+        return []
+
+    md = _node_to_md(content_node).strip("\n")
+    lines = md.split("\n")
+
+    # Collapse runs of 2+ blank lines to a single blank line
+    cleaned = []
+    blank_run = 0
+    for line in lines:
+        if line.strip() == "":
+            blank_run += 1
+            if blank_run <= 1:
+                cleaned.append("")
+        else:
+            blank_run = 0
+            cleaned.append(line)
+
+    return cleaned
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+def tabs_to_callouts(html_input, callout_type="note"):
+    builder = _TreeBuilder()
+    builder.feed(html_input)
+    root = builder.root
+
+    tabs = extract_tabs(root)
+    if not tabs:
+        print("Warning: no wps_tabs widget found in input.", file=sys.stderr)
+        return ""
+
+    blocks = []
+    for tab_name, content_node in tabs:
+        header = f"> [!{callout_type}]- **{tab_name}**"
+        lines = [header, ">"]   # blank line after header
+
+        for line in content_to_callout_lines(content_node):
+            lines.append(f">") if line == "" else lines.append(f"> {line}")
+
+        blocks.append("\n".join(lines))
+
+    return "\n\n".join(blocks) + "\n"
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Convert HTML wps_tabs widgets from stdin into Obsidian-style collapsible callouts.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+EXAMPLES:
+  # Wayland clipboard (paste in, copy result back)
+  wl-paste | ./%(prog)s | wl-copy
+
+  # X11 clipboard (paste in, copy result back)
+  xclip -o -sel clip | ./%(prog)s | xclip -i -sel clip
+
+  # From a saved HTML file
+  cat page.html | ./%(prog)s
+
+  # From an inline snippet
+  echo '<ul class="wps_tabs">...</ul>' | ./%(prog)s
+
+  # Override the Obsidian callout type
+  wl-paste | ./%(prog)s --callout-type tip
+""",
+    )
+    parser.add_argument(
+        "--callout-type",
+        default="note",
+        metavar="TYPE",
+        help="Obsidian callout type to use for each tab (default: note). "
+             "Examples: note, tip, info, warning, abstract",
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {VERSION}",
+    )
+
+    args = parser.parse_args()
+
+    if sys.stdin.isatty():
+        parser.print_usage(sys.stderr)
+        print("Error: no input on stdin. Pipe HTML into this command, e.g.:", file=sys.stderr)
+        print(f"  echo '<ul class=\"wps_tabs\">...</ul>' | {parser.prog}", file=sys.stderr)
+        sys.exit(1)
+
+    html_input = sys.stdin.read()
+    if not html_input.strip():
+        print("Error: no input received on stdin.", file=sys.stderr)
+        sys.exit(1)
+
+    sys.stdout.write(tabs_to_callouts(html_input, callout_type=args.callout_type))
+
+
+if __name__ == "__main__":
+    main()
