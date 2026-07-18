@@ -350,7 +350,17 @@ def content_to_callout_lines(content_node):
             blank_run = 0
             cleaned.append(line)
 
-    return cleaned
+    # Ensure a blank line precedes each table header row.
+    _delimiter = re.compile(r'^\s*\|(?:\s*[:-]+\s*\|)+\s*$')
+    spaced = []
+    for i, line in enumerate(cleaned):
+        next_line = cleaned[i + 1] if i + 1 < len(cleaned) else ""
+        is_table_header = _delimiter.match(next_line)
+        if is_table_header and i > 0 and cleaned[i - 1].strip() != "":
+            spaced.append("")
+        spaced.append(line)
+
+    return spaced
 
 
 # ---------------------------------------------------------------------------
