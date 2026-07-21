@@ -1,0 +1,116 @@
+# curator — courses.toml.example
+# ─────────────────────────────────────────────────────────────────────────────
+# Copy this file to <library-root>/courses.toml and customise for your library.
+# This file is the SINGLE SOURCE OF TRUTH for all naming rules and categories.
+#
+# The [triage] section drives the AI-assisted sorting workflow.
+# Everything else drives `count`, `lint`, `print`, and `summary`.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Library ───────────────────────────────────────────────────────────────────
+[library]
+name         = "My Course Library"          # display name used in headers
+# root       = "/path/to/library"           # optional: auto-detected if absent
+unsorted_dir = "0x0_unsorted"               # staging directory name
+
+# Directories skipped by all commands (relative to library root)
+excluded_dirs = [
+    ".git",
+    "utils",
+    "0x0_unsorted",    # excluded by default; opt-in with --unsorted
+]
+
+# ── Video extensions ──────────────────────────────────────────────────────────
+[video]
+extensions = [".mp4", ".mkv", ".avi", ".flv", ".ts", ".webm", ".m4v"]
+
+# ── Naming conventions ────────────────────────────────────────────────────────
+[naming]
+
+# Human-readable rule descriptions shown in `triage` Section 1.
+# These are passed as-is to the AI; make them as precise as you need.
+[naming.rules]
+category   = "NN_Title_Case — two-digit numeric prefix + Title_Case (e.g. 01_Networking)"
+subtopic   = "Title_Case — underscores only, no spaces or hyphens (e.g. Cisco_CCNA)"
+course     = "Source_CourseName — one optional underscore separating publisher and name (e.g. CBT-Nuggets_CCNA-200-301)"
+no_spaces  = "Replace all spaces with hyphens inside the course name portion"
+strip      = "Strip site-noise prefixes like [TutsNode.com], [ CourseWikia.com ], @Handle, etc."
+
+# Common publisher prefixes shown in `triage` Section 1.
+# Key = publisher name (shown to AI), Value = prefix used in folder names.
+[naming.source_prefixes]
+"Udemy"                                    = "Udemy_"
+"CBT Nuggets"                              = "CBT-Nuggets_"
+"Pearson / LiveLessons"                    = "Pearson_"
+"Packt"                                    = "Packt_"
+"Pluralsight"                              = "Pluralsight_"
+"No clear platform (standalone)"           = "(omit prefix — use course name only)"
+
+# Regex patterns for lint validation.
+# Any folder not matching its level's pattern is flagged as a violation.
+[naming.patterns]
+category_dir = "^\\d{2}_[A-Z]"        # e.g. 01_Networking
+subtopic_dir = "^[A-Z][A-Za-z0-9_]*$" # Title_Case, underscores only
+course_dir   = ""                       # empty = course level not validated
+
+# ── Category structure ────────────────────────────────────────────────────────
+# Used by `lint` to validate folder names and by `print` to build the tree.
+# List your top-level category folders here.
+[structure]
+categories = [
+    "00_References",
+    "01_Networking",
+    "02_Linux",
+    "03_Security",
+    "04_Programming",
+    # add more as needed
+]
+
+# ── Triage ────────────────────────────────────────────────────────────────────
+# Drives `curator triage` — the AI-assisted sorting workflow.
+# Each [[triage.categories]] entry maps keywords → target path.
+# The AI receives these as a decision guide.
+
+[[triage.categories]]
+keywords = ["networking", "TCP/IP", "BGP", "MPLS", "QoS"]
+target   = "01_Networking/<New_Subtopic>/"
+notes    = "Create a new subtopic subfolder if no existing subtopic fits"
+
+[[triage.categories]]
+keywords = ["Cisco", "CCNA", "routing", "switching", "VLAN", "OSPF", "BGP", "STP"]
+target   = "01_Networking/Cisco_CCNA/"
+
+[[triage.categories]]
+keywords = ["subnetting", "IP addressing", "VLSM", "CIDR"]
+target   = "01_Networking/Subnetting/"
+
+[[triage.categories]]
+keywords = ["Linux", "bash", "shell", "Ubuntu", "Debian"]
+target   = "02_Linux/Linux_General/"
+notes    = "Create Linux_General/ subtopic if it does not yet exist"
+
+[[triage.categories]]
+keywords = ["RHCSA", "RHEL", "Red Hat", "CentOS", "EX200", "sysadmin"]
+target   = "02_Linux/RHCSA/"
+
+[[triage.categories]]
+keywords = ["Python", "scripting", "automation"]
+target   = "04_Programming/Python/"
+
+[[triage.categories]]
+keywords = ["PDF", "cheat sheet", "handbook", "reference guide", "documentation"]
+target   = "00_References/Handbooks/"
+
+# ── Triage — AI task prompt (Section 3) ──────────────────────────────────────
+# The instructions printed at the end of every triage dump.
+# Edit freely — no code changes needed.
+[triage.prompt]
+title    = "AI Task Prompt"
+preamble = "For each item above, provide:"
+instructions = [
+    "Suggested target path         (category/subtopic/ from the Decision Guide)",
+    "Suggested renamed folder/file (Source_CourseName naming convention)",
+    "The exact `mv` shell command  (use full BASE path shown below)",
+    "Confidence level              (high / medium / low)",
+    "Notes  (e.g. \"strip [TutsNode.com] prefix\", \"create new subtopic\")",
+]

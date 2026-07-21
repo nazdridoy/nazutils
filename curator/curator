@@ -1,0 +1,295 @@
+#!/usr/bin/env python3
+"""
+curator
+================================
+Audits, lints, visualizes, and triages local video course libraries.
+
+Run  ./curator --help  for full usage.
+"""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+# Locate the library root directory:
+# Checks CWD first, then script parent directory, defaulting to CWD.
+_SCRIPT_DIR = Path(__file__).resolve().parent
+_CWD = Path.cwd()
+
+if (_CWD / "courses.toml").exists():
+    _DEFAULT_ROOT = _CWD
+elif (_SCRIPT_DIR.parent / "courses.toml").exists():
+    _DEFAULT_ROOT = _SCRIPT_DIR.parent
+else:
+    _DEFAULT_ROOT = _CWD
+
+# Import internal library
+sys.path.insert(0, str(_SCRIPT_DIR))
+import _curator_lib as _lib  # noqa: E402
+
+VERSION = _lib.VERSION
+
+
+# ── Argument parser ────────────────────────────────────────────────────────────
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {VERSION}",
+    )
+
+    # Global options shared by all subcommands
+    global_opts = argparse.ArgumentParser(add_help=False)
+    global_opts.add_argument(
+        "--root", "-r",
+        metavar="PATH",
+        default=None,
+        help=f"Override library root (default: {_DEFAULT_ROOT})",
+    )
+    global_opts.add_argument(
+        "--config", "-c",
+        metavar="FILE",
+        default=None,
+        help="Path to courses.toml (default: <root>/courses.toml)",
+    )
+    global_opts.add_argument(
+        "--format",
+        choices=["text", "markdown", "json"],
+        default="text",
+        help="Output format: text (default) · markdown · json",
+    )
+
+    sub = parser.add_subparsers(dest="command", metavar="<command>")
+    sub.required = True
+
+    # ── count ──────────────────────────────────────────────────────────────────
+    p_count = sub.add_parser(
+        "count",
+        parents=[global_opts],
+        help="Audit video lesson/section counts per course",
+        description="Walk every course in the library and print lesson/section counts.",
+    )
+    p_count.add_argument(
+        "--filter", "-f",
+        metavar="CATEGORY",
+        default=None,
+        help="Show only categories whose name contains CATEGORY (case-insensitive)",
+    )
+    p_count.add_argument(
+        "--list-categories", "-l",
+        action="store_true",
+        help="Print all available top-level category names and exit",
+    )
+    p_count.add_argument(
+        "--unsorted",
+        action="store_true",
+        help="Include the unsorted staging directory in the audit",
+    )
+
+    # ── lint ───────────────────────────────────────────────────────────────────
+    p_lint = sub.add_parser(
+        "lint",
+        parents=[global_opts],
+        help="Scan for naming-convention violations",
+        description=(
+            "Scan every category, sub-topic, and course folder against naming conventions.\n"
+            "Exit code: 0 = clean, 1 = violations found."
+        ),
+    )
+    p_lint.add_argument(
+        "--no-categories",
+        action="store_true",
+        help="Skip validation of top-level category folder names",
+    )
+    p_lint.add_argument(
+        "--quiet", "-q",
+        action="store_true",
+        help="Suppress per-violation output; use exit code only",
+    )
+
+    # ── print ──────────────────────────────────────────────────────────────────
+    p_print = sub.add_parser(
+        "print",
+        parents=[global_opts],
+        help="Print a live, sorted, annotated full hierarchy",
+        description="Generate an annotated directory tree from disk on every run.",
+    )
+    p_print.add_argument(
+        "--filter", "-f",
+        metavar="CATEGORY",
+        default=None,
+        help="Show only categories whose name contains CATEGORY (case-insensitive)",
+    )
+    p_print.add_argument(
+        "--unsorted",
+        action="store_true",
+        help="Include the unsorted staging directory at the bottom",
+    )
+
+    # ── summary ────────────────────────────────────────────────────────────────
+    sub.add_parser(
+        "summary",
+        parents=[global_opts],
+        help="Run lint + count together; print a combined health report",
+        description="One-pass lint + count with a box-bordered health report.",
+    )
+
+    # ── triage ─────────────────────────────────────────────────────────────────
+    p_triage = sub.add_parser(
+        "triage",
+        parents=[global_opts],
+        help="Produce an AI-ready context dump of the unsorted staging directory",
+        description=(
+            "Produce a self-contained context block you can paste into any AI tool\n"
+            "(ChatGPT, Claude, Gemini, etc.) to receive rename + move decisions.\n"
+            "Requires the [triage] section in courses.toml."
+        ),
+    )
+    p_triage.add_argument(
+        "--full",
+        action="store_true",
+        help="Show all subdirs and files without truncation (default: cap at 6 subdirs, 10 files)",
+    )
+    p_triage.add_argument(
+        "--each",
+        action="store_true",
+        help="Output one self-contained triage block per unsorted item (paste into AI one at a time)",
+    )
+
+    return parser
+
+
+# ── Helpers ────────────────────────────────────────────────────────────────────
+
+def _setup(args: argparse.Namespace) -> tuple[Path, dict]:
+    """Resolve root and load config, then return (root, cfg)."""
+    cfg_path = Path(args.config).resolve() if args.config else None
+    # Determine root before loading config so we can find the default toml
+    preliminary_root = Path(args.root).resolve() if args.root else _DEFAULT_ROOT
+    cfg = _lib.load_config(preliminary_root, cfg_path)
+    root = _lib.resolve_root(cfg, args.root)
+    return root, cfg
+
+
+# ── Command handlers ───────────────────────────────────────────────────────────
+
+def cmd_count(args: argparse.Namespace) -> int:
+    root, cfg = _setup(args)
+
+    if args.list_categories:
+        cats = _lib.get_categories(root, cfg, include_unsorted=getattr(args, "unsorted", False))
+        print("Available categories:")
+        for c in cats:
+            print(f"  {c.name}")
+        return 0
+
+    rows = _lib.count_all(
+        root, cfg,
+        filter_cat=args.filter,
+        include_unsorted=getattr(args, "unsorted", False),
+    )
+
+    fmt = args.format
+    if fmt == "json":
+        print(_lib.render_count_json(rows))
+    elif fmt == "markdown":
+        print(_lib.render_count_markdown(rows))
+    else:
+        print(_lib.render_count_text(rows))
+    return 0
+
+
+def cmd_lint(args: argparse.Namespace) -> int:
+    root, cfg = _setup(args)
+    violations = _lib.scan_violations(root, cfg, check_cats=not args.no_categories)
+
+    if not args.quiet:
+        fmt = args.format
+        if fmt == "json":
+            print(_lib.render_lint_json(violations))
+        elif fmt == "markdown":
+            print(_lib.render_lint_markdown(violations))
+        else:
+            print(_lib.render_lint_text(violations))
+
+    return 1 if violations else 0
+
+
+def cmd_print(args: argparse.Namespace) -> int:
+    root, cfg = _setup(args)
+    tree = _lib.build_tree_data(
+        root, cfg,
+        include_unsorted=args.unsorted,
+        filter_cat=args.filter,
+    )
+
+    fmt = args.format
+    if fmt == "json":
+        print(_lib.render_tree_json(tree))
+    elif fmt == "markdown":
+        print(_lib.render_tree_markdown(tree))
+    else:
+        print(_lib.render_tree_text(tree))
+    return 0
+
+
+def cmd_summary(args: argparse.Namespace) -> int:
+    root, cfg = _setup(args)
+    rows = _lib.count_all(root, cfg)
+    violations = _lib.scan_violations(root, cfg)
+
+    fmt = args.format
+    if fmt == "json":
+        print(_lib.render_summary_json(rows, violations, cfg, root))
+    elif fmt == "markdown":
+        print(_lib.render_summary_markdown(rows, violations, cfg, root))
+    else:
+        print(_lib.render_summary_text(rows, violations, cfg, root))
+    return 0
+
+
+def cmd_triage(args: argparse.Namespace) -> int:
+    root, cfg = _setup(args)
+    ctx = _lib.build_triage_context(root, cfg)
+
+    fmt = args.format
+    full = args.full
+
+    if args.each:
+        print(_lib.render_triage_each(ctx, fmt=fmt, full=full))
+    elif fmt == "json":
+        print(_lib.render_triage_json(ctx))
+    elif fmt == "markdown":
+        print(_lib.render_triage_markdown(ctx, full=full))
+    else:
+        print(_lib.render_triage_text(ctx, full=full))
+    return 0
+
+
+# ── Dispatch ───────────────────────────────────────────────────────────────────
+
+_COMMANDS = {
+    "count": cmd_count,
+    "lint": cmd_lint,
+    "print": cmd_print,
+    "summary": cmd_summary,
+    "triage": cmd_triage,
+}
+
+
+def main() -> None:
+    parser = build_parser()
+    args = parser.parse_args()
+    handler = _COMMANDS[args.command]
+    sys.exit(handler(args))
+
+
+if __name__ == "__main__":
+    main()
