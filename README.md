@@ -15,6 +15,7 @@ Each utility is self-contained in its own directory with a dedicated `README.md`
 | **`mdtablefix`** | [`Mdtablefix/`](./Mdtablefix) | Python | Scans and fixes Markdown tables that lack a preceding blank line required for proper rendering. |
 | **`ghdummypatgen`** | [`Ghdummypatgen/`](./Ghdummypatgen) | Python | Generates randomized, mock GitHub Personal Access Tokens and workflow keys (`ghp_`, `ghs_`, `github_pat_`) for testing. |
 | **`tab2callout`** | [`Tab2callout/`](./Tab2callout) | Python | Reads HTML tab widgets (`wps_tabs` format) from stdin and converts each tab into an Obsidian-style collapsible callout. |
+| **`curator`** | [`curator/`](./curator) | Python | Audits, lints, visualizes, and triages local video course libraries with AI-assisted staging. |
 | **`base64imgbank`** | [`Base64imgbank/`](./Base64imgbank) | Bash | Extracts inline base64 images from Markdown files to a separate image bank note, replacing them with clean Obsidian-style backlinks. |
 | **`fontstyle`** | [`Fontest/`](./Fontest) | Bash | Displays a colorized terminal test pattern checking ANSI escape sequences (bold, italic, colors, etc.). |
 | **`fontsymbols`** | [`Fontest/`](./Fontest) | Bash | Renders a table preview of various Nerd Fonts icon ranges to check glyph compatibility and boundary clipping. |
@@ -24,7 +25,7 @@ Each utility is self-contained in its own directory with a dedicated `README.md`
 ## Getting Started
 
 ### 1. Requirements
-- Most utilities require **Python 3.8+** (standard library only, no `pip install` required).
+- Most utilities require **Python 3.8+** (`curator` requires **Python 3.11+** for standard library `tomllib`; standard library only, no `pip install` required).
 - Bash scripts require a Bash-compatible environment (Linux, macOS, or WSL).
 
 ### 2. Make Executable
