@@ -1,7 +1,7 @@
 # Copyright (c) 2026 nazDridoy
 # SPDX-License-Identifier: MIT
 """
-_curator_lib.py — Internal shared library for curator
+_curator_lib.py - Internal shared library for curator
 Not a CLI; import only.
 
 Python >= 3.11 required (tomllib is stdlib).
@@ -62,7 +62,7 @@ def load_config(root: Path, config_path: Path | None = None) -> dict[str, Any]:
                 cfg = tomllib.load(fh)
         except tomllib.TOMLDecodeError as exc:
             _die(f"courses.toml parse error: {exc}")
-    # else: file missing — pure defaults, that's fine for count/lint/print
+    # else: file missing - pure defaults, that's fine for count/lint/print
 
     # Deep-merge defaults under cfg
     for section, defaults in _DEFAULTS.items():
@@ -484,7 +484,7 @@ def build_triage_context(root: Path, cfg: dict[str, Any]) -> dict[str, Any]:
     triage_cats = cfg["triage"].get("categories", [])
     items = scan_unsorted(root, cfg)
 
-    # Prompt defaults — used if [triage.prompt] is absent from courses.toml
+    # Prompt defaults - used if [triage.prompt] is absent from courses.toml
     _default_prompt = {
         "title": "AI Task Prompt",
         "preamble": "For each item above, provide:",
@@ -511,7 +511,7 @@ def build_triage_context(root: Path, cfg: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-# ── Renderers — count ──────────────────────────────────────────────────────────
+# ── Renderers - count ──────────────────────────────────────────────────────────
 
 def render_count_text(rows: list[dict[str, Any]]) -> str:
     if not rows:
@@ -555,7 +555,7 @@ def render_count_json(rows: list[dict[str, Any]]) -> str:
     return json.dumps({"courses": rows, "total_courses": len(rows), "total_videos": total_v}, indent=2)
 
 
-# ── Renderers — lint ───────────────────────────────────────────────────────────
+# ── Renderers - lint ───────────────────────────────────────────────────────────
 
 def render_lint_text(violations: list[dict[str, str]]) -> str:
     if not violations:
@@ -579,7 +579,7 @@ def render_lint_json(violations: list[dict[str, str]]) -> str:
     return json.dumps({"violations": violations, "count": len(violations), "clean": len(violations) == 0}, indent=2)
 
 
-# ── Renderers — print (tree) ──────────────────────────────────────────────────
+# ── Renderers - print (tree) ──────────────────────────────────────────────────
 
 def render_tree_text(tree: list[dict[str, Any]]) -> str:
     """Render the library tree with box-drawing characters."""
@@ -624,7 +624,7 @@ def render_tree_json(tree: list[dict[str, Any]]) -> str:
     return json.dumps(tree, indent=2)
 
 
-# ── Renderers — summary ───────────────────────────────────────────────────────
+# ── Renderers - summary ───────────────────────────────────────────────────────
 
 def render_summary_text(
     rows: list[dict[str, Any]],
@@ -643,12 +643,12 @@ def render_summary_text(
             unsorted_count = sum(1 for _ in unsorted_path.iterdir())
         except PermissionError:
             pass
-    unsorted_msg = f"{unsorted_name}/ — empty" if unsorted_count == 0 else f"{unsorted_name}/ — {unsorted_count} item(s) awaiting sorting"
-    lint_msg = "ok  All directories match conventions." if not violations else f"FAIL  {len(violations)} violation(s) found — run lint for details."
+    unsorted_msg = f"{unsorted_name}/ - empty" if unsorted_count == 0 else f"{unsorted_name}/ - {unsorted_count} item(s) awaiting sorting"
+    lint_msg = "ok  All directories match conventions." if not violations else f"FAIL  {len(violations)} violation(s) found - run lint for details."
     width = 56
     border_top = "╔" + "═" * width + "╗"
     border_bot = "╚" + "═" * width + "╝"
-    title = f"{lib_name} — Health Report"
+    title = f"{lib_name} - Health Report"
     title_padded = title.center(width)
     lines = [
         border_top,
@@ -688,14 +688,14 @@ def render_summary_markdown(
             pass
     lint_msg = "All directories match conventions." if not violations else f"{len(violations)} violation(s) found."
     lines = [
-        f"## {lib_name} — Health Report",
+        f"## {lib_name} - Health Report",
         "",
         f"| Metric | Value |",
         f"|--------|-------|",
         f"| Naming lint | {lint_msg} |",
         f"| Courses | {total_c} |",
         f"| Videos | {total_v:,} total video lessons |",
-        f"| Unsorted | {unsorted_name}/ — {'empty' if unsorted_count == 0 else f'{unsorted_count} item(s)'} |",
+        f"| Unsorted | {unsorted_name}/ - {'empty' if unsorted_count == 0 else f'{unsorted_count} item(s)'} |",
     ]
     return "\n".join(lines)
 
@@ -727,7 +727,7 @@ def render_summary_json(
     }, indent=2)
 
 
-# ── Renderers — triage ────────────────────────────────────────────────────────
+# ── Renderers - triage ────────────────────────────────────────────────────────
 
 def render_triage_text(ctx: dict[str, Any], full: bool = False) -> str:
     _SUBDIRS_LIMIT = 6
@@ -737,12 +737,12 @@ def render_triage_text(ctx: dict[str, Any], full: bool = False) -> str:
     label = ctx.get("_each_label") or f"{ctx['item_count']} item(s) awaiting sorting"
     lines = [
         sep,
-        f"  COURSE TRIAGE CONTEXT — {ctx['library_name']}",
+        f"  COURSE TRIAGE CONTEXT - {ctx['library_name']}",
         f"  Generated: {ctx['generated_at']}  ·  {label}",
         sep,
         "",
-        "## SECTION 1 — Library Rules",
-        "(read from courses.toml — authoritative)",
+        "## SECTION 1 - Library Rules",
+        "(read from courses.toml - authoritative)",
         "",
     ]
 
@@ -779,10 +779,10 @@ def render_triage_text(ctx: dict[str, Any], full: bool = False) -> str:
         lines.append("")
 
     # Section 2
-    lines += ["## SECTION 2 — Unsorted Directory Scan", ""]
+    lines += ["## SECTION 2 - Unsorted Directory Scan", ""]
     items = ctx["items"]
     if not items:
-        lines.append(f"  {ctx['library_name']} unsorted dir — empty")
+        lines.append(f"  {ctx['library_name']} unsorted dir - empty")
     else:
         lines.append(f"  0x0_unsorted/  ({len(items)} item(s))")
         lines.append("")
@@ -823,7 +823,7 @@ def render_triage_text(ctx: dict[str, Any], full: bool = False) -> str:
     preamble = prompt.get("preamble", "For each item above, provide:")
     instructions = prompt.get("instructions", [])
     lines += [
-        f"## SECTION 3 — {title}",
+        f"## SECTION 3 - {title}",
         "",
         f"  {preamble}",
     ]
@@ -842,13 +842,13 @@ def render_triage_markdown(ctx: dict[str, Any], full: bool = False) -> str:
     _ROOT_FILES_LIMIT = 10
     label = ctx.get("_each_label") or f"{ctx['item_count']} item(s) awaiting sorting"
     lines = [
-        f"# Course Triage Context — {ctx['library_name']}",
+        f"# Course Triage Context - {ctx['library_name']}",
         "",
         f"**Generated:** {ctx['generated_at']}  |  **{label}**",
         "",
         "---",
         "",
-        "## Section 1 — Library Rules",
+        "## Section 1 - Library Rules",
         "",
     ]
 
@@ -885,7 +885,7 @@ def render_triage_markdown(ctx: dict[str, Any], full: bool = False) -> str:
             lines.append(f"| {kws} | {target} | {note} |")
         lines.append("")
 
-    lines += ["---", "", "## Section 2 — Unsorted Directory Scan", ""]
+    lines += ["---", "", "## Section 2 - Unsorted Directory Scan", ""]
     items = ctx["items"]
     if not items:
         lines.append("_Unsorted directory is empty._")
@@ -927,7 +927,7 @@ def render_triage_markdown(ctx: dict[str, Any], full: bool = False) -> str:
     lines += [
         "---",
         "",
-        f"## Section 3 — {title}",
+        f"## Section 3 - {title}",
         "",
         preamble,
         "",
@@ -960,7 +960,7 @@ def render_triage_each(
     """
     items = ctx["items"]
     if not items:
-        # Nothing to split — fall through to normal render
+        # Nothing to split - fall through to normal render
         if fmt == "markdown":
             return render_triage_markdown(ctx, full=full)
         elif fmt == "json":

@@ -39,8 +39,8 @@ Ensure you have Python 3 installed. No external dependencies are required.
 
 | Flag | Long Option | Description | Required | Default |
 | :--- | :--- | :--- | :---: | :--- |
-| `-p` | `--prefix` | Prefix for new filenames. | **Yes** | — |
-| `-n` | `--digits` | Number of digits for sequence padding. | **Yes** | — |
+| `-p` | `--prefix` | Prefix for new filenames. | **Yes** | - |
+| `-n` | `--digits` | Number of digits for sequence padding. | **Yes** | - |
 | `-t` | `--path` | Target directory containing the files. | No | `.` (current directory) |
 | `-f` | `--fill-gaps` | Fill existing sequence gaps before appending new numbers. | No | `False` |
 | `-y` | `--yes` | Skip the interactive confirmation prompt. | No | `False` |

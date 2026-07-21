@@ -40,7 +40,7 @@ Ensure you have Python 3 installed. No external dependencies are required.
 | :--- | :--- | :---: | :--- |
 | `target_directory` | The path to scan. | No | Parent directory of the script |
 | `--apply` | Write the fixes (insert blank lines) in-place to modified files. | No | Dry-run (scan only) |
-| `-h`, `--help` | Show the help message and exit. | No | — |
+| `-h`, `--help` | Show the help message and exit. | No | - |
 
 ---
 

@@ -5,7 +5,7 @@
 tab2callout
 ================================
 Reads HTML tab widgets (wps_tabs format) from stdin and converts
-each tab into an Obsidian-style collapsible callout — no external
+each tab into an Obsidian-style collapsible callout - no external
 dependencies required.
 
 Run  ./tab2callout --help  for full usage.

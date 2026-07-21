@@ -1,4 +1,4 @@
-# Curator — Video Course Library Manager
+# Curator - Video Course Library Manager
 
 **Curator** is a CLI tool designed to audit, lint, visualize, and triage local video course libraries.
 
@@ -48,7 +48,7 @@ curator triage
 
 ## Commands & Usage
 
-### 1. `count` — Lesson Auditor
+### 1. `count` - Lesson Auditor
 
 Walks every course in the library and prints a formatted table showing section and video counts per course.
 
@@ -69,7 +69,7 @@ curator count --unsorted
 curator count --format json
 ```
 
-### 2. `lint` — Naming Convention Linter
+### 2. `lint` - Naming Convention Linter
 
 Scans category, sub-topic, and course folder names against regex rules defined in `courses.toml`.
 
@@ -84,7 +84,7 @@ curator lint --no-categories
 curator lint --quiet
 ```
 
-### 3. `print` — Live Full Hierarchy
+### 3. `print` - Live Full Hierarchy
 
 Outputs an annotated directory tree showing courses, sub-topics, sections, and lesson counts.
 
@@ -99,7 +99,7 @@ curator print --filter 02_Linux
 curator print --format markdown
 ```
 
-### 4. `summary` — Health Report
+### 4. `summary` - Health Report
 
 Runs linting and lesson auditing in a single pass to produce a box-bordered executive summary.
 
@@ -108,7 +108,7 @@ curator summary
 curator summary --format markdown
 ```
 
-### 5. `triage` — AI-Ready Unsorted Context Dump
+### 5. `triage` - AI-Ready Unsorted Context Dump
 
 Generates a context payload containing your library rules, category decision guide, and unsorted directory scan. Paste this into an AI model to receive exact `mv` commands and target paths.
 
@@ -139,8 +139,8 @@ unsorted_dir = "0x0_unsorted"
 excluded_dirs = [".git", "utils", "0x0_unsorted"]
 
 [naming.rules]
-category = "NN_Title_Case — two-digit numeric prefix + Title_Case"
-subtopic = "Title_Case — underscores only, no spaces or hyphens"
+category = "NN_Title_Case - two-digit numeric prefix + Title_Case"
+subtopic = "Title_Case - underscores only, no spaces or hyphens"
 course = "Source_CourseName"
 
 [triage.prompt]

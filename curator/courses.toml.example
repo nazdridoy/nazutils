@@ -1,4 +1,4 @@
-# curator — courses.toml.example
+# curator - courses.toml.example
 # ─────────────────────────────────────────────────────────────────────────────
 # Copy this file to <library-root>/courses.toml and customise for your library.
 # This file is the SINGLE SOURCE OF TRUTH for all naming rules and categories.
@@ -30,9 +30,9 @@ extensions = [".mp4", ".mkv", ".avi", ".flv", ".ts", ".webm", ".m4v"]
 # Human-readable rule descriptions shown in `triage` Section 1.
 # These are passed as-is to the AI; make them as precise as you need.
 [naming.rules]
-category   = "NN_Title_Case — two-digit numeric prefix + Title_Case (e.g. 01_Networking)"
-subtopic   = "Title_Case — underscores only, no spaces or hyphens (e.g. Cisco_CCNA)"
-course     = "Source_CourseName — one optional underscore separating publisher and name (e.g. CBT-Nuggets_CCNA-200-301)"
+category   = "NN_Title_Case - two-digit numeric prefix + Title_Case (e.g. 01_Networking)"
+subtopic   = "Title_Case - underscores only, no spaces or hyphens (e.g. Cisco_CCNA)"
+course     = "Source_CourseName - one optional underscore separating publisher and name (e.g. CBT-Nuggets_CCNA-200-301)"
 no_spaces  = "Replace all spaces with hyphens inside the course name portion"
 strip      = "Strip site-noise prefixes like [TutsNode.com], [ CourseWikia.com ], @Handle, etc."
 
@@ -44,7 +44,7 @@ strip      = "Strip site-noise prefixes like [TutsNode.com], [ CourseWikia.com ]
 "Pearson / LiveLessons"                    = "Pearson_"
 "Packt"                                    = "Packt_"
 "Pluralsight"                              = "Pluralsight_"
-"No clear platform (standalone)"           = "(omit prefix — use course name only)"
+"No clear platform (standalone)"           = "(omit prefix - use course name only)"
 
 # Regex patterns for lint validation.
 # Any folder not matching its level's pattern is flagged as a violation.
@@ -67,7 +67,7 @@ categories = [
 ]
 
 # ── Triage ────────────────────────────────────────────────────────────────────
-# Drives `curator triage` — the AI-assisted sorting workflow.
+# Drives `curator triage` - the AI-assisted sorting workflow.
 # Each [[triage.categories]] entry maps keywords → target path.
 # The AI receives these as a decision guide.
 
@@ -101,9 +101,9 @@ target   = "04_Programming/Python/"
 keywords = ["PDF", "cheat sheet", "handbook", "reference guide", "documentation"]
 target   = "00_References/Handbooks/"
 
-# ── Triage — AI task prompt (Section 3) ──────────────────────────────────────
+# ── Triage - AI task prompt (Section 3) ──────────────────────────────────────
 # The instructions printed at the end of every triage dump.
-# Edit freely — no code changes needed.
+# Edit freely - no code changes needed.
 [triage.prompt]
 title    = "AI Task Prompt"
 preamble = "For each item above, provide:"

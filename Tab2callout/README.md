@@ -1,6 +1,6 @@
 # tab2callout
 
-`tab2callout` is a Python CLI utility that reads HTML tab widgets (`wps_tabs` format) from stdin and converts each tab into an [Obsidian](https://obsidian.md)-style collapsible callout. No external dependencies — standard library only.
+`tab2callout` is a Python CLI utility that reads HTML tab widgets (`wps_tabs` format) from stdin and converts each tab into an [Obsidian](https://obsidian.md)-style collapsible callout. No external dependencies - standard library only.
 
 ## Features
 
@@ -38,8 +38,8 @@ Ensure you have Python 3 installed. No external dependencies are required.
 | Option | Description | Default |
 | :--- | :--- | :--- |
 | `--callout-type TYPE` | Obsidian callout type for each tab block | `note` |
-| `--version` | Show version and exit | — |
-| `-h`, `--help` | Show help message and exit | — |
+| `--version` | Show version and exit | - |
+| `-h`, `--help` | Show help message and exit | - |
 
 ---
 

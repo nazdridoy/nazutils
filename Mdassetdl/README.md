@@ -2,7 +2,7 @@
 
 A zero-dependency Python utility for Markdown note vaults. It finds remote image and GIF links in `.md` files, downloads them locally, rewrites the links to relative paths, and keeps the original URLs as invisible inline comments.
 
-> **No `pip install` required** — Python 3.8+ standard library only.
+> **No `pip install` required** - Python 3.8+ standard library only.
 
 ---
 
@@ -64,7 +64,7 @@ Use `--flat-assets` to force the flat layout even for a directory target.
 
 ## Link Format After Update
 
-Every rewritten link keeps the original URL as a standard HTML comment on the next line — universally hidden in GitHub, VS Code, Obsidian (Reading View + Live Preview), and all CommonMark-compliant renderers:
+Every rewritten link keeps the original URL as a standard HTML comment on the next line - universally hidden in GitHub, VS Code, Obsidian (Reading View + Live Preview), and all CommonMark-compliant renderers:
 
 ```markdown
 Before:
@@ -129,7 +129,7 @@ After:
 | `d` | Opens the full per-asset detail in `$PAGER` → `less` → `more` → `pydoc` → print |
 | `f` | Walk through each file one by one: `[y] Yes, process` / `[s] Skip this file` / `[a] Abort all` |
 | `g` | Execute immediately, trust the summary |
-| `a` | Abort — nothing written |
+| `a` | Abort - nothing written |
 
 ### Real-time download progress
 
@@ -177,7 +177,7 @@ Before rewriting any `.md` file, the script saves a `.md.bak` beside it. Use `--
   Restore all? [y/N]:
 ```
 
-> `.bak` files are **kept** after restore — you can restore again later without re-running the download.
+> `.bak` files are **kept** after restore - you can restore again later without re-running the download.
 
 ---
 
@@ -201,7 +201,7 @@ YouTube, Vimeo, Twitch, and similar video embeds are detected and listed in the 
 |---|---|---|
 | `target` | | Path to a `.md` file **or** a directory (top-level `.md` files only, non-recursive) |
 | `--download-only` | | Download assets but do **not** modify the `.md` file |
-| `--update-only` | | Rewrite links only — no downloading. Assets must already exist locally |
+| `--update-only` | | Rewrite links only - no downloading. Assets must already exist locally |
 | `--assets-dir NAME` | | Asset folder name (default: `Assets`). Relative to target |
 | `--flat-assets` | | Use a single flat `Assets/` folder instead of per-file subfolders |
 | `--strip-prefix TEXT` | | Strip this prefix from `.md` stems when naming per-file subfolders. If omitted, the full stem is used |
@@ -218,10 +218,10 @@ YouTube, Vimeo, Twitch, and similar video embeds are detected and listed in the 
 ## Examples
 
 ```bash
-# Full run — download + update links (single file):
+# Full run - download + update links (single file):
 ./mdassetdl "CCNA_Sem_1/Module 1 - Networking Today.md"
 
-# Full run — whole directory, shorter subfolder names:
+# Full run - whole directory, shorter subfolder names:
 ./mdassetdl CCNA_Sem_1/ --strip-prefix "CCNA 1 v7.0 Curriculum "
 
 # Download assets only, don't touch .md files:
@@ -230,7 +230,7 @@ YouTube, Vimeo, Twitch, and similar video embeds are detected and listed in the 
 # Update links only (assets already downloaded):
 ./mdassetdl CCNA_Sem_1/ --update-only
 
-# Flat asset folder — everything in one Assets/ dir:
+# Flat asset folder - everything in one Assets/ dir:
 ./mdassetdl CCNA_Sem_1/ --flat-assets
 
 # Custom asset folder name:
@@ -239,10 +239,10 @@ YouTube, Vimeo, Twitch, and similar video embeds are detected and listed in the 
 # Force re-download (overwrite existing files):
 ./mdassetdl CCNA_Sem_1/ --force
 
-# Non-interactive — no prompts, auto-confirm:
+# Non-interactive - no prompts, auto-confirm:
 ./mdassetdl CCNA_Sem_1/ --yes
 
-# Verbose output — see every download and link change:
+# Verbose output - see every download and link change:
 ./mdassetdl CCNA_Sem_1/ --verbose --yes
 
 # Restore backups after a run:
@@ -256,7 +256,7 @@ YouTube, Vimeo, Twitch, and similar video embeds are detected and listed in the 
 | Guarantee | Detail |
 |---|---|
 | **Preview before write** | Always shown; nothing written until you confirm |
-| **Original URLs preserved** | Kept as `<!-- original: https://... -->` on the next line — hidden in GitHub, VS Code, and Obsidian |
+| **Original URLs preserved** | Kept as `<!-- original: https://... -->` on the next line - hidden in GitHub, VS Code, and Obsidian |
 | **Automatic backup** | `.md.bak` created beside each file before any link rewrite |
 | **Restore any time** | `--restore` rolls back `.md` files from their `.bak` |
 | **Idempotent** | Already-local links are never re-processed on a second run |
