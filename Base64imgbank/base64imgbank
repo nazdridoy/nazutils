@@ -1,4 +1,6 @@
 #!/bin/bash
+# Copyright (c) 2026 nazDridoy
+# SPDX-License-Identifier: MIT
 
 # File paths
 ORIGIN_NOTE="$1"

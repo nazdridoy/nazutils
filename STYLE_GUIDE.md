@@ -8,10 +8,12 @@ This document establishes the consistency standards for all command-line interfa
 
 To keep scripts clean and maintainable, top-level module docstrings must remain brief, high-level, and formatted consistently. Do **not** hardcode version numbers or detailed flags in the module docstring.
 
-Every Python script must begin with a docstring using this exact layout:
+Every Python script must begin with a shebang, license header, and docstring using this exact layout:
 
 ```python
 #!/usr/bin/env python3
+# Copyright (c) 2026 nazDridoy
+# SPDX-License-Identifier: MIT
 """
 <prog_name>
 ================================
@@ -24,6 +26,8 @@ Run  ./<prog_name> --help  for full usage.
 *Example:*
 ```python
 #!/usr/bin/env python3
+# Copyright (c) 2026 nazDridoy
+# SPDX-License-Identifier: MIT
 """
 seqrename
 ================================
@@ -84,3 +88,22 @@ To ensure consistent `--help` menus, error checking, and option styling, all Pyt
 
 - **No external dependencies**: Utilities must rely solely on Python's standard library. Do not require users to run `pip install`.
 - **Portability**: Code should target compatibility with Python 3.8+ and run reliably on Linux, macOS, and WSL environments.
+
+---
+
+## 5. License Headers
+
+Every script (Python or Bash) in `nazutils` must include a standard Copyright and SPDX License Identifier comment block immediately following the shebang:
+
+```python
+#!/usr/bin/env python3
+# Copyright (c) 2026 nazDridoy
+# SPDX-License-Identifier: MIT
+```
+
+```bash
+#!/usr/bin/env bash
+# Copyright (c) 2026 nazDridoy
+# SPDX-License-Identifier: MIT
+```
+

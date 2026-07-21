@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright (c) 2026 nazDridoy
+# SPDX-License-Identifier: MIT
 
 # Sample text
 text="You can use ANSI escape codes to change the font style, color, and other text attributes in the terminal."

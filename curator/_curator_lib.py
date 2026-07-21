@@ -1,3 +1,5 @@
+# Copyright (c) 2026 nazDridoy
+# SPDX-License-Identifier: MIT
 """
 _curator_lib.py — Internal shared library for curator
 Not a CLI; import only.
