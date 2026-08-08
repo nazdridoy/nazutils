@@ -19,6 +19,11 @@ Each utility is self-contained in its own directory with a dedicated `README.md`
 | **`base64imgbank`** | [`Base64imgbank/`](./Base64imgbank) | Bash | Extracts inline base64 images from Markdown files to a separate image bank note, replacing them with clean Obsidian-style backlinks. |
 | **`fontstyle`** | [`Fontest/`](./Fontest) | Bash | Displays a colorized terminal test pattern checking ANSI escape sequences (bold, italic, colors, etc.). |
 | **`fontsymbols`** | [`Fontest/`](./Fontest) | Bash | Renders a table preview of various Nerd Fonts icon ranges to check glyph compatibility and boundary clipping. |
+| **`ex`** | [`Ex/`](./Ex) | Bash | Universal archive extractor — detects format by extension and calls the right tool automatically. |
+| **`mkd`** | [`Mkd/`](./Mkd) | Bash | Creates one or more directories (with parents) and navigates into the result; uses fzf when multiple are given. |
+| **`webcammgr`** | [`Webcammgr/`](./Webcammgr) | Bash | Interactive fzf-driven manager to enable/disable individual webcam devices or the entire uvcvideo kernel module. |
+| **`qcow2-compress`** | [`Qcow2compress/`](./Qcow2compress) | Bash | Compresses a QEMU qcow2 disk image in-place via `qemu-img` sparse conversion; safe atomic swap on success. |
+| **`br`** | [`Br/`](./Br) | Bash | Ephemeral bridge interface manager: create, destroy, attach, detach, assign IPs, and bulk-manage bridges via `ip link`. |
 
 ---
 
