@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+# Copyright (c) 2026 nazDridoy
+# SPDX-License-Identifier: MIT
+
+# Compress a qcow2 VM disk image in-place using qemu-img.
+# Writes to a temp file first; replaces the original only on success.
+# Requires: qemu-utils (qemu-img)
+
+set -euo pipefail
+
+SCRIPT_NAME="$(basename "$0")"
+
+usage() {
+    cat <<EOF
+Usage: $SCRIPT_NAME <disk.qcow2>
+
+Compress a QEMU qcow2 disk image in-place using sparse conversion.
+The original file is replaced only if compression succeeds.
+
+Requires: qemu-img (from the qemu-utils package)
+
+Arguments:
+  <disk.qcow2>   Path to the qcow2 image to compress
+
+Examples:
+  $SCRIPT_NAME vm-disk.qcow2
+  $SCRIPT_NAME /var/lib/libvirt/images/my-vm.qcow2
+EOF
+}
+
+if [[ $# -eq 0 || "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+
+if ! command -v qemu-img &>/dev/null; then
+    echo "error: qemu-img not found. Install the qemu-utils package." >&2
+    exit 1
+fi
+
+DISK="$1"
+
+if [[ ! -f "$DISK" ]]; then
+    echo "error: '$DISK' is not a valid file." >&2
+    exit 1
+fi
+
+TMP="${DISK}.tmp"
+
+# Guard against leftover temp files
+if [[ -e "$TMP" ]]; then
+    echo "error: temp file '$TMP' already exists. Remove it and retry." >&2
+    exit 1
+fi
+
+echo "Compressing: $DISK"
+echo "Temp file:   $TMP"
+
+if qemu-img convert -p -O qcow2 -c "$DISK" "$TMP"; then
+    mv "$TMP" "$DISK"
+    echo "Done: '$DISK' compressed successfully."
+else
+    echo "error: compression failed." >&2
+    rm -f "$TMP"
+    exit 1
+fi
