@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+# Copyright (c) 2026 nazDridoy
+# SPDX-License-Identifier: MIT
+
+# NOTE: Running this as a standalone script cannot change your shell's working
+# directory (cd only affects the subprocess). For the cd behaviour, add the
+# function below to your shell config and call it as a shell function instead:
+#
+#   mkd() {
+#     command mkd "$@" && cd "$(command mkd --print-dir "$@")"
+#   }
+#
+# Or use the recommended shell alias (see README.md for details).
+
+set -euo pipefail
+
+SCRIPT_NAME="$(basename "$0")"
+
+usage() {
+    cat <<EOF
+Usage: $SCRIPT_NAME <directory> [directory2 ...]
+
+Create one or more directories (with parent paths) and print the
+target directory to stdout. When multiple directories are created,
+use fzf to interactively select which one to cd into.
+
+Requires: fzf (only when creating multiple directories)
+
+Options:
+  -h, --help   Show this help message
+
+Note:
+  As a standalone script, \`cd\` cannot affect your parent shell.
+  See README.md for shell function wrappers that enable cd behaviour.
+
+Examples:
+  $SCRIPT_NAME projects/new-idea
+  $SCRIPT_NAME dir1 dir2 dir3
+EOF
+}
+
+# Internal helper mode: print the selected dir for shell wrapper use
+PRINT_DIR_MODE=0
+if [[ "${1:-}" == "--print-dir" ]]; then
+    PRINT_DIR_MODE=1
+    shift
+fi
+
+if [[ $# -eq 0 || "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+    usage
+    exit 0
+fi
+
+# Create directories
+if ! mkdir -p "$@"; then
+    echo "error: failed to create one or more directories" >&2
+    exit 1
+fi
+
+# Determine which directory to enter
+if [[ "$#" -gt 1 ]]; then
+    if ! command -v fzf &>/dev/null; then
+        echo "error: fzf is required to select from multiple directories" >&2
+        echo "Install fzf: https://github.com/junegunn/fzf" >&2
+        exit 1
+    fi
+    selected_dir=$(printf '%s\n' "$@" | fzf --prompt="Select directory to enter: " --height=~50%)
+    if [[ -z "$selected_dir" ]]; then
+        echo "No selection made." >&2
+        exit 0
+    fi
+else
+    selected_dir="$1"
+fi
+
+if (( PRINT_DIR_MODE )); then
+    printf '%s\n' "$selected_dir"
+else
+    echo "Created: $(realpath "$selected_dir")"
+fi

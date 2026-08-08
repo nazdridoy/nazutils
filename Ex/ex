@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+# Copyright (c) 2026 nazDridoy
+# SPDX-License-Identifier: MIT
+
+set -euo pipefail
+
+SCRIPT_NAME="$(basename "$0")"
+
+usage() {
+    cat <<EOF
+Usage: $SCRIPT_NAME <archive> [archive2 ...]
+
+Universal archive extractor. Detects format by extension and
+calls the appropriate extraction tool automatically.
+
+Supported formats:
+  .tar.gz  .tgz      tar xzf
+  .tar.bz2 .tbz2     tar xjf
+  .tar.xz  .tar.zst  tar xf
+  .tar                tar xf
+  .gz                 gunzip
+  .bz2                bunzip2
+  .rar                unrar x
+  .zip                unzip
+  .Z                  uncompress
+  .7z                 7z x
+  .deb                ar x
+
+Examples:
+  $SCRIPT_NAME archive.tar.gz
+  $SCRIPT_NAME file1.zip file2.tar.bz2
+EOF
+}
+
+# Require at least one argument
+if [[ $# -eq 0 || "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+
+exit_code=0
+
+for archive in "$@"; do
+    if [[ ! -f "$archive" ]]; then
+        echo "error: '$archive' is not a valid file" >&2
+        exit_code=1
+        continue
+    fi
+
+    echo "Extracting: $archive"
+    case "$archive" in
+        *.tar.bz2)  tar xjf "$archive"    ;;
+        *.tar.gz)   tar xzf "$archive"    ;;
+        *.tar.xz)   tar xf  "$archive"    ;;
+        *.tar.zst)  tar xf  "$archive"    ;;
+        *.tar)      tar xf  "$archive"    ;;
+        *.tbz2)     tar xjf "$archive"    ;;
+        *.tgz)      tar xzf "$archive"    ;;
+        *.bz2)      bunzip2 "$archive"    ;;
+        *.gz)       gunzip  "$archive"    ;;
+        *.rar)      unrar x "$archive"    ;;
+        *.zip)      unzip   "$archive"    ;;
+        *.Z)        uncompress "$archive" ;;
+        *.7z)       7z x    "$archive"    ;;
+        *.deb)      ar x    "$archive"    ;;
+        *)
+            echo "error: '$archive' — unrecognised extension, cannot extract" >&2
+            exit_code=1
+            ;;
+    esac
+done
+
+exit "$exit_code"
