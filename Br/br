@@ -1,0 +1,261 @@
+#!/usr/bin/env bash
+# Copyright (c) 2026 nazDridoy
+# SPDX-License-Identifier: MIT
+
+# Ephemeral ip-link bridge manager.
+# Bridges created with this tool are lost on reboot.
+# For persistent bridges use nmcli.
+# Requires: iproute2, bridge-utils (bridge), sudo
+
+set -uo pipefail
+
+SCRIPT_NAME="$(basename "$0")"
+
+# ── ANSI colours ──────────────────────────────────────────────────────────────
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+BOLD='\033[1m'
+RESET='\033[0m'
+
+# ── Internal helpers ──────────────────────────────────────────────────────────
+_br_exists() { ip link show "$1" &>/dev/null; }
+
+_br_require() {
+    if ! _br_exists "$1"; then
+        echo -e "${RED}✗ Bridge '${BOLD}$1${RESET}${RED}' not found.${RESET}" >&2
+        return 1
+    fi
+}
+
+# ── Help ──────────────────────────────────────────────────────────────────────
+_br_help() {
+    cat <<EOF
+$(echo -e "${CYAN}${BOLD}Bridge manager${RESET} (ephemeral — lost on reboot)")
+
+$(echo -e "${YELLOW}Usage:${RESET}  $SCRIPT_NAME <subcommand> [args] [--options]")
+
+$(echo -e "${YELLOW}Subcommands:${RESET}")
+  $(echo -e "${BOLD}create${RESET}")  <name> [--stp]            Create & bring up a bridge
+  $(echo -e "${BOLD}destroy${RESET}") <name>                    Tear down a bridge
+  $(echo -e "${BOLD}attach${RESET}")  <iface> <bridge>          Attach an interface to a bridge
+  $(echo -e "${BOLD}detach${RESET}")  <iface>                   Detach an interface from its bridge
+  $(echo -e "${BOLD}ip${RESET}")      <bridge> <cidr>           Assign an IP to a bridge
+  $(echo -e "${BOLD}list${RESET}")                              Show all bridge members
+  $(echo -e "${BOLD}status${RESET}")  [<name>]                  Show state of one or all bridges
+  $(echo -e "${BOLD}bulk${RESET}")    create  <prefix> <count> [--stp]
+  $(echo -e "${BOLD}bulk${RESET}")    destroy <prefix> <count>
+
+$(echo -e "${YELLOW}Options:${RESET}")
+  $(echo -e "${BOLD}--stp${RESET}")   Keep STP enabled (default: STP is disabled for faster link-up)
+
+$(echo -e "${YELLOW}Examples:${RESET}")
+  $SCRIPT_NAME create br-lab
+  $SCRIPT_NAME attach eth1 br-lab
+  $SCRIPT_NAME ip br-lab 192.168.1.10/24
+  $SCRIPT_NAME bulk create br-lab 3
+  $SCRIPT_NAME bulk destroy br-lab 3
+  $SCRIPT_NAME status
+EOF
+}
+
+# ── Subcommand dispatch ───────────────────────────────────────────────────────
+sub="${1:-}"
+(( $# )) && shift || true
+
+case "$sub" in
+
+# br create <name> [--stp]
+create)
+    name=""
+    stp=0
+    for arg in "$@"; do
+        case "$arg" in --stp) stp=1 ;; *) name="$arg" ;; esac
+    done
+    if [[ -z "$name" ]]; then
+        echo -e "${YELLOW}Usage: $SCRIPT_NAME create <name> [--stp]${RESET}" >&2
+        exit 1
+    fi
+
+    if _br_exists "$name"; then
+        echo -e "${YELLOW}⚠ Bridge '${BOLD}$name${RESET}${YELLOW}' already exists — skipping.${RESET}"
+        exit 0
+    fi
+
+    sudo ip link add "$name" type bridge || exit 1
+    sudo ip link set "$name" up          || exit 1
+
+    if (( stp == 0 )); then
+        sudo ip link set "$name" type bridge stp_state 0
+        echo -e "${CYAN}ℹ STP disabled on '${BOLD}$name${RESET}${CYAN}' (faster link-up).${RESET}"
+    fi
+    echo -e "${GREEN}✔ Bridge '${BOLD}$name${RESET}${GREEN}' created and up.${RESET}"
+    ;;
+
+# br destroy <name>
+destroy)
+    name="${1:-}"
+    if [[ -z "$name" ]]; then
+        echo -e "${YELLOW}Usage: $SCRIPT_NAME destroy <name>${RESET}" >&2
+        exit 1
+    fi
+    _br_require "$name" || exit 1
+    sudo ip link delete "$name" type bridge && \
+        echo -e "${GREEN}✔ Bridge '${BOLD}$name${RESET}${GREEN}' destroyed.${RESET}"
+    ;;
+
+# br attach <iface> <bridge>
+attach)
+    iface="${1:-}"
+    bridge="${2:-}"
+    if [[ -z "$iface" || -z "$bridge" ]]; then
+        echo -e "${YELLOW}Usage: $SCRIPT_NAME attach <iface> <bridge>${RESET}" >&2
+        exit 1
+    fi
+    _br_require "$bridge" || exit 1
+    sudo ip link set "$iface" master "$bridge" || exit 1
+    sudo ip link set "$iface" up               || exit 1
+    echo -e "${GREEN}✔ '${BOLD}$iface${RESET}${GREEN}' attached to bridge '${BOLD}$bridge${RESET}${GREEN}'.${RESET}"
+    ;;
+
+# br detach <iface>
+detach)
+    iface="${1:-}"
+    if [[ -z "$iface" ]]; then
+        echo -e "${YELLOW}Usage: $SCRIPT_NAME detach <iface>${RESET}" >&2
+        exit 1
+    fi
+    sudo ip link set "$iface" nomaster && \
+        echo -e "${GREEN}✔ '${BOLD}$iface${RESET}${GREEN}' detached from its bridge.${RESET}"
+    ;;
+
+# br ip <bridge> <cidr>
+ip)
+    bridge="${1:-}"
+    cidr="${2:-}"
+    if [[ -z "$bridge" || -z "$cidr" ]]; then
+        echo -e "${YELLOW}Usage: $SCRIPT_NAME ip <bridge> <cidr>${RESET}" >&2
+        exit 1
+    fi
+    _br_require "$bridge" || exit 1
+    sudo ip address add "$cidr" dev "$bridge" && \
+        echo -e "${GREEN}✔ Assigned ${BOLD}$cidr${RESET}${GREEN} to '${BOLD}$bridge${RESET}${GREEN}'.${RESET}"
+    ;;
+
+# br list
+list)
+    bridge link show
+    ;;
+
+# br status [<name>]
+status)
+    name="${1:-}"
+
+    _print_one() {
+        local br="$1"
+        local state
+        state=$(ip -br link show "$br" 2>/dev/null | awk '{print $2}')
+        echo -e "${CYAN}━━ ${BOLD}${br}${RESET}${CYAN}${RESET} [${state}]"
+        local members
+        members=$(bridge link show 2>/dev/null \
+                  | awk -v b="$br" '$0 ~ "master " b { print "   ↳ " $2 }')
+        if [[ -n "$members" ]]; then
+            echo "$members"
+        else
+            echo "   (no attached interfaces)"
+        fi
+    }
+
+    if [[ -n "$name" ]]; then
+        _br_require "$name" || exit 1
+        _print_one "$name"
+    else
+        bridges=$(ip -br link show type bridge 2>/dev/null | awk '{print $1}')
+        if [[ -z "$bridges" ]]; then
+            echo -e "${YELLOW}No bridges found.${RESET}"
+            exit 0
+        fi
+        while IFS= read -r b; do _print_one "$b"; done <<< "$bridges"
+    fi
+    ;;
+
+# br bulk create|destroy <prefix> <count> [--stp]
+bulk)
+    action="${1:-}"
+    (( $# )) && shift || true
+
+    case "$action" in
+    create)
+        prefix=""
+        count=""
+        stp_flag=""
+        for arg in "$@"; do
+            case "$arg" in
+                --stp)   stp_flag="--stp" ;;
+                [0-9]*)  count="$arg" ;;
+                *)        prefix="$arg" ;;
+            esac
+        done
+        if [[ -z "$prefix" || -z "$count" ]]; then
+            echo -e "${YELLOW}Usage: $SCRIPT_NAME bulk create <prefix> <count> [--stp]${RESET}" >&2
+            exit 1
+        fi
+        echo -e "${BLUE}Creating $count bridge(s) — prefix '${BOLD}$prefix${RESET}${BLUE}'…${RESET}"
+        ok=0; fail=0
+        for i in $(seq 1 "$count"); do
+            if "$0" create "${prefix}${i}" $stp_flag; then (( ok++ ))
+            else (( fail++ ))
+            fi
+        done
+        if (( fail > 0 )); then
+            echo -e "${GREEN}✔ $ok created${RESET}${RED}, $fail failed${RESET}."
+        else
+            echo -e "${GREEN}✔ $ok created${RESET}."
+        fi
+        ;;
+
+    destroy)
+        prefix="${1:-}"
+        count="${2:-}"
+        if [[ -z "$prefix" || -z "$count" ]]; then
+            echo -e "${YELLOW}Usage: $SCRIPT_NAME bulk destroy <prefix> <count>${RESET}" >&2
+            exit 1
+        fi
+        echo -e "${BLUE}Destroying $count bridge(s) — prefix '${BOLD}$prefix${RESET}${BLUE}'…${RESET}"
+        ok=0; fail=0
+        for i in $(seq 1 "$count"); do
+            if "$0" destroy "${prefix}${i}"; then (( ok++ ))
+            else (( fail++ ))
+            fi
+        done
+        if (( fail > 0 )); then
+            echo -e "${GREEN}✔ $ok destroyed${RESET}${RED}, $fail failed${RESET}."
+        else
+            echo -e "${GREEN}✔ $ok destroyed${RESET}."
+        fi
+        ;;
+
+    ''|help|--help|-h)
+        echo -e "${YELLOW}Usage:${RESET}  $SCRIPT_NAME bulk create  <prefix> <count> [--stp]"
+        echo    "         $SCRIPT_NAME bulk destroy <prefix> <count>"
+        ;;
+
+    *)
+        echo -e "${RED}✗ Unknown bulk action '${BOLD}$action${RESET}${RED}'. Use: create | destroy${RESET}" >&2
+        exit 1
+        ;;
+    esac
+    ;;
+
+# fallthrough → help
+''|help|--help|-h)
+    _br_help
+    ;;
+
+*)
+    echo -e "${RED}✗ Unknown subcommand '${BOLD}$sub${RESET}${RED}'. Run ${BOLD}$SCRIPT_NAME help${RESET}${RED} for usage.${RESET}" >&2
+    exit 1
+    ;;
+esac
