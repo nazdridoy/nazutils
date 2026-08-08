@@ -1,0 +1,191 @@
+#!/usr/bin/env bash
+# Copyright (c) 2026 nazDridoy
+# SPDX-License-Identifier: MIT
+
+# Advanced webcam manager — enable/disable specific or all webcams
+# Requires: v4l2-utils, fzf, sudo
+
+# ── ANSI colours ──────────────────────────────────────────────────────────────
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+BOLD='\033[1m'
+RESET='\033[0m'
+
+# ── Dependency checks ─────────────────────────────────────────────────────────
+if ! command -v v4l2-ctl &>/dev/null; then
+    echo "error: v4l2-ctl not found. Install the v4l2-utils package." >&2
+    exit 1
+fi
+
+if ! command -v fzf &>/dev/null; then
+    echo "error: fzf not found. Install fzf." >&2
+    exit 1
+fi
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+webcam_status() {
+    if lsmod | grep -q "uvcvideo"; then
+        echo -e "${GREEN}ENABLED${RESET}"
+        return 0
+    else
+        echo -e "${RED}DISABLED${RESET}"
+        return 1
+    fi
+}
+
+device_accessible() {
+    local device="$1"
+    [[ -r "$device" && -w "$device" ]]
+}
+
+list_webcams() {
+    echo "Detected webcam devices:"
+    if webcam_status >/dev/null 2>&1; then
+        local devices
+        devices=$(v4l2-ctl --list-devices 2>/dev/null)
+        if [[ -z "$devices" ]]; then
+            echo "No accessible webcam devices found, but module is loaded."
+            echo "Some devices may be disabled (check permissions below)."
+        else
+            echo "$devices"
+        fi
+
+        echo ""
+        echo "Video device nodes and permissions:"
+        ls -la /dev/video* 2>/dev/null || echo "No video nodes available"
+
+        local device dev_name info
+        for device in /dev/video*; do
+            if [[ -e "$device" ]]; then
+                dev_name=$(basename "$device")
+                if device_accessible "$device"; then
+                    info=$(v4l2-ctl --device="$device" --info 2>/dev/null \
+                           | grep "Card type" | cut -d: -f2- | xargs)
+                    echo -n "$dev_name: "
+                    if [[ -n "$info" ]]; then
+                        echo -e "${GREEN}ENABLED${RESET} - $info"
+                    else
+                        echo -e "${GREEN}ENABLED${RESET} - Unknown device"
+                    fi
+                else
+                    echo -n "$dev_name: "
+                    echo -e "${RED}DISABLED${RESET} - No access permissions"
+                fi
+            fi
+        done
+    else
+        echo "Cannot list devices - webcam module is not loaded."
+    fi
+}
+
+# ── Main ──────────────────────────────────────────────────────────────────────
+echo -e "${BOLD}===== WEBCAM MANAGER =====${RESET}"
+echo -n "Webcam module status: "
+webcam_status; true
+
+echo ""
+list_webcams
+echo ""
+
+# Build options: "action|device|Display label"
+declare -a options=()
+
+if lsmod | grep -q "uvcvideo"; then
+    options+=("disable_all||Disable all webcam devices (unload module)")
+else
+    options+=("enable_all||Enable all webcam devices (load module)")
+fi
+
+if lsmod | grep -q "uvcvideo"; then
+    dev_name=""
+    card_info=""
+    for device in /dev/video*; do
+        if [[ -e "$device" ]]; then
+            dev_name=$(basename "$device")
+            if device_accessible "$device"; then
+                card_info=$(v4l2-ctl --device="$device" --info 2>/dev/null \
+                            | grep "Card type" | cut -d: -f2- | xargs || true)
+                if [[ -n "$card_info" ]]; then
+                    options+=("disable_device|$dev_name|Disable $dev_name ($card_info)")
+                else
+                    options+=("disable_device|$dev_name|Disable $dev_name")
+                fi
+            else
+                options+=("enable_device|$dev_name|Enable $dev_name")
+            fi
+        fi
+    done
+fi
+
+options+=("exit||Exit webcam manager")
+
+# Display column-aligned labels; action (field 1) and device (field 2) embedded
+selection=$(printf '%s\n' "${options[@]}" | column -t -s'|' \
+            | fzf --prompt="Select action: " --height=~50%)
+
+if [[ -z "$selection" ]]; then
+    echo "No action selected. Exiting."
+    exit 0
+fi
+
+action=$(echo "$selection" | awk '{print $1}')
+device=$(echo "$selection" | grep -o 'video[0-9]*' | head -1)
+
+case "$action" in
+    enable_all)
+        echo "Enabling webcam module..."
+        sudo modprobe uvcvideo
+        sleep 1
+        for dev in /dev/video*; do
+            [[ -e "$dev" ]] && sudo chmod 660 "$dev"
+        done
+        echo ""
+        echo -n "Webcam module status: "
+        webcam_status; true
+        echo ""
+        list_webcams
+        ;;
+    disable_all)
+        echo "Disabling webcam module..."
+        sudo modprobe -r uvcvideo
+        sleep 1
+        echo ""
+        echo -n "Webcam module status: "
+        webcam_status; true
+        ;;
+    enable_device)
+        if [[ -e "/dev/$device" ]]; then
+            echo "Enabling device $device..."
+            sudo chmod 660 "/dev/$device"
+            echo "Device $device enabled. Access permissions restored."
+        else
+            echo "error: device /dev/$device not found" >&2
+            exit 1
+        fi
+        echo ""
+        list_webcams
+        ;;
+    disable_device)
+        if [[ -e "/dev/$device" ]]; then
+            echo "Disabling device $device..."
+            sudo chmod 000 "/dev/$device"
+            echo "Device $device disabled. Access permissions removed."
+        else
+            echo "error: device /dev/$device not found" >&2
+            exit 1
+        fi
+        echo ""
+        list_webcams
+        ;;
+    exit|"")
+        echo "Exiting webcam manager."
+        exit 0
+        ;;
+    *)
+        echo "error: invalid selection '$action'" >&2
+        exit 1
+        ;;
+esac
+
+echo ""
+echo "Webcam manager operation completed."
