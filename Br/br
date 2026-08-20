@@ -30,6 +30,29 @@ _br_require() {
     fi
 }
 
+# Derive a safe 192.168.200.X/32 address for a bridge.
+# Host octet = trailing digits in name (mod 254), or explicit index for bulk.
+# Falls back to host 200 if no digits found in the name.
+_br_autoip() {
+    local name="$1"
+    local idx="${2:-}"
+    local host
+    if [[ -n "$idx" ]]; then
+        host=$(( idx % 254 ))
+        (( host == 0 )) && host=254
+    else
+        local digits
+        digits=$(grep -oP '\d+$' <<< "$name" 2>/dev/null || true)
+        if [[ -n "$digits" ]]; then
+            host=$(( digits % 254 ))
+            (( host == 0 )) && host=254
+        else
+            host=200
+        fi
+    fi
+    echo "192.168.200.${host}/32"
+}
+
 # ── Help ──────────────────────────────────────────────────────────────────────
 _br_help() {
     cat <<EOF
@@ -38,24 +61,26 @@ $(echo -e "${CYAN}${BOLD}Bridge manager${RESET} (ephemeral — lost on reboot)")
 $(echo -e "${YELLOW}Usage:${RESET}  $SCRIPT_NAME <subcommand> [args] [--options]")
 
 $(echo -e "${YELLOW}Subcommands:${RESET}")
-  $(echo -e "${BOLD}create${RESET}")  <name> [--stp]            Create & bring up a bridge
-  $(echo -e "${BOLD}destroy${RESET}") <name>                    Tear down a bridge
-  $(echo -e "${BOLD}attach${RESET}")  <iface> <bridge>          Attach an interface to a bridge
-  $(echo -e "${BOLD}detach${RESET}")  <iface>                   Detach an interface from its bridge
-  $(echo -e "${BOLD}ip${RESET}")      <bridge> <cidr>           Assign an IP to a bridge
-  $(echo -e "${BOLD}list${RESET}")                              Show all bridge members
-  $(echo -e "${BOLD}status${RESET}")  [<name>]                  Show state of one or all bridges
-  $(echo -e "${BOLD}bulk${RESET}")    create  <prefix> <count> [--stp]
+  $(echo -e "${BOLD}create${RESET}")  <name> [--stp] [--autoip]   Create & bring up a bridge
+  $(echo -e "${BOLD}destroy${RESET}") <name>                       Tear down a bridge
+  $(echo -e "${BOLD}attach${RESET}")  <iface> <bridge>             Attach an interface to a bridge
+  $(echo -e "${BOLD}detach${RESET}")  <iface>                      Detach an interface from its bridge
+  $(echo -e "${BOLD}ip${RESET}")      <bridge> <cidr>              Assign an IP to a bridge
+  $(echo -e "${BOLD}list${RESET}")                                 Show all bridge members
+  $(echo -e "${BOLD}status${RESET}")  [<name>]                     Show state of one or all bridges
+  $(echo -e "${BOLD}bulk${RESET}")    create  <prefix> <count> [--stp] [--autoip]
   $(echo -e "${BOLD}bulk${RESET}")    destroy <prefix> <count>
 
 $(echo -e "${YELLOW}Options:${RESET}")
-  $(echo -e "${BOLD}--stp${RESET}")   Keep STP enabled (default: STP is disabled for faster link-up)
+  $(echo -e "${BOLD}--stp${RESET}")    Keep STP enabled (default: STP is disabled for faster link-up)
+  $(echo -e "${BOLD}--autoip${RESET}") Assign a safe 192.168.200.X/32 automatically (X = bridge index)
 
 $(echo -e "${YELLOW}Examples:${RESET}")
   $SCRIPT_NAME create br-lab
+  $SCRIPT_NAME create br-lab1 --autoip
   $SCRIPT_NAME attach eth1 br-lab
   $SCRIPT_NAME ip br-lab 192.168.1.10/24
-  $SCRIPT_NAME bulk create br-lab 3
+  $SCRIPT_NAME bulk create br-lab 3 --autoip
   $SCRIPT_NAME bulk destroy br-lab 3
   $SCRIPT_NAME status
 EOF
@@ -67,15 +92,20 @@ sub="${1:-}"
 
 case "$sub" in
 
-# br create <name> [--stp]
+# br create <name> [--stp] [--autoip]
 create)
     name=""
     stp=0
+    autoip=0
     for arg in "$@"; do
-        case "$arg" in --stp) stp=1 ;; *) name="$arg" ;; esac
+        case "$arg" in
+            --stp)    stp=1    ;;
+            --autoip) autoip=1 ;;
+            *)        name="$arg" ;;
+        esac
     done
     if [[ -z "$name" ]]; then
-        echo -e "${YELLOW}Usage: $SCRIPT_NAME create <name> [--stp]${RESET}" >&2
+        echo -e "${YELLOW}Usage: $SCRIPT_NAME create <name> [--stp] [--autoip]${RESET}" >&2
         exit 1
     fi
 
@@ -91,6 +121,16 @@ create)
         sudo ip link set "$name" type bridge stp_state 0
         echo -e "${CYAN}ℹ STP disabled on '${BOLD}$name${RESET}${CYAN}' (faster link-up).${RESET}"
     fi
+
+    if (( autoip )); then
+        cidr=$(_br_autoip "$name")
+        if sudo ip address add "$cidr" dev "$name"; then
+            echo -e "${CYAN}ℹ Auto-IP ${BOLD}${cidr}${RESET}${CYAN} assigned to '${BOLD}${name}${RESET}${CYAN}'.${RESET}"
+        else
+            echo -e "${YELLOW}⚠ Could not assign auto-IP ${BOLD}${cidr}${RESET}${YELLOW} (may already exist).${RESET}"
+        fi
+    fi
+
     echo -e "${GREEN}✔ Bridge '${BOLD}$name${RESET}${GREEN}' created and up.${RESET}"
     ;;
 
@@ -102,8 +142,31 @@ destroy)
         exit 1
     fi
     _br_require "$name" || exit 1
-    sudo ip link delete "$name" type bridge && \
-        echo -e "${GREEN}✔ Bridge '${BOLD}$name${RESET}${GREEN}' destroyed.${RESET}"
+
+    # Detect if a NetworkManager connection profile owns this bridge device.
+    # If so, use nmcli to delete the profile — plain 'ip link delete' would
+    # succeed momentarily but NM would silently recreate the interface.
+    nm_conn=""
+    if command -v nmcli &>/dev/null; then
+        nm_conn=$(nmcli -t -f NAME,DEVICE connection show 2>/dev/null \
+                  | awk -F: -v dev="$name" '$2 == dev {print $1}' | head -1)
+    fi
+
+    if [[ -n "$nm_conn" ]]; then
+        echo -e "${YELLOW}⚠ Warning: '${BOLD}$name${RESET}${YELLOW}' is managed by NetworkManager (profile: '${BOLD}${nm_conn}${RESET}${YELLOW}').${RESET}"
+        echo -e "${YELLOW}  This will permanently delete the NM connection profile and the bridge.${RESET}"
+        echo -en "${BOLD}  Proceed? [y/N] ${RESET}"
+        read -r reply
+        if [[ ! "$reply" =~ ^[Yy]$ ]]; then
+            echo -e "${CYAN}ℹ Aborted.${RESET}"
+            exit 0
+        fi
+        sudo nmcli connection delete "$nm_conn" && \
+            echo -e "${GREEN}✔ Bridge '${BOLD}$name${RESET}${GREEN}' and its NM profile destroyed.${RESET}"
+    else
+        sudo ip link delete "$name" type bridge && \
+            echo -e "${GREEN}✔ Bridge '${BOLD}$name${RESET}${GREEN}' destroyed.${RESET}"
+    fi
     ;;
 
 # br attach <iface> <bridge>
@@ -158,6 +221,12 @@ status)
         local state
         state=$(ip -br link show "$br" 2>/dev/null | awk '{print $2}')
         echo -e "${CYAN}━━ ${BOLD}${br}${RESET}${CYAN}${RESET} [${state}]"
+        local addrs
+        addrs=$(ip -br addr show "$br" 2>/dev/null \
+                | awk '{for(i=3;i<=NF;i++) print "   ↳ IP: " $i}')
+        if [[ -n "$addrs" ]]; then
+            echo "$addrs"
+        fi
         local members
         members=$(bridge link show 2>/dev/null \
                   | awk -v b="$br" '$0 ~ "master " b { print "   ↳ " $2 }')
@@ -191,21 +260,23 @@ bulk)
         prefix=""
         count=""
         stp_flag=""
+        autoip_flag=""
         for arg in "$@"; do
             case "$arg" in
-                --stp)   stp_flag="--stp" ;;
-                [0-9]*)  count="$arg" ;;
+                --stp)    stp_flag="--stp" ;;
+                --autoip) autoip_flag="--autoip" ;;
+                [0-9]*)   count="$arg" ;;
                 *)        prefix="$arg" ;;
             esac
         done
         if [[ -z "$prefix" || -z "$count" ]]; then
-            echo -e "${YELLOW}Usage: $SCRIPT_NAME bulk create <prefix> <count> [--stp]${RESET}" >&2
+            echo -e "${YELLOW}Usage: $SCRIPT_NAME bulk create <prefix> <count> [--stp] [--autoip]${RESET}" >&2
             exit 1
         fi
         echo -e "${BLUE}Creating $count bridge(s) — prefix '${BOLD}$prefix${RESET}${BLUE}'…${RESET}"
         ok=0; fail=0
         for i in $(seq 1 "$count"); do
-            if "$0" create "${prefix}${i}" $stp_flag; then (( ok++ ))
+            if "$0" create "${prefix}${i}" $stp_flag $autoip_flag; then (( ok++ ))
             else (( fail++ ))
             fi
         done
@@ -238,7 +309,7 @@ bulk)
         ;;
 
     ''|help|--help|-h)
-        echo -e "${YELLOW}Usage:${RESET}  $SCRIPT_NAME bulk create  <prefix> <count> [--stp]"
+        echo -e "${YELLOW}Usage:${RESET}  $SCRIPT_NAME bulk create  <prefix> <count> [--stp] [--autoip]"
         echo    "         $SCRIPT_NAME bulk destroy <prefix> <count>"
         ;;
 
